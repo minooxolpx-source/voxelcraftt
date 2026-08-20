@@ -256,6 +256,9 @@ export class UI {
     this.invScreen.style.display = "none";
   }
 
+  /** Fecha todas as telas (usado ao entrar no jogo). */
+  hideScreens(): void { this.hideAllScreens(); }
+
   fatal(msg: string): void {
     this.hideLoading();
     const s = el("div", "screen");

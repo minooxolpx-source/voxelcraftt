@@ -49,6 +49,10 @@ export class Game implements UIHost {
   private keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
   private mouseL = false;
   private mouseR = false;
+  /** true quando o navegador/iframe recusou o pointer lock — usa modo arrastar */
+  private lockUnavailable = false;
+  private rDownX = 0;
+  private rDownY = 0;
 
   // mineração / construção
   private mineKey = "";
@@ -328,23 +332,26 @@ export class Game implements UIHost {
   private enterPlay(): void {
     this.started = true;
     this.state = "playing";
-    this.ui.showPause(false);
-    this.ui.showInventory(false);
+    this.ui.hideScreens(); // some com menu principal / pausa / inventário
     this.ui.setHUDVisible(true);
     this.ui.updateHotbar();
+    this.lockUnavailable = false;
     this.requestLock(4);
   }
 
   private requestLock(retries: number): void {
+    if (this.lockUnavailable || this.locked) return;
     try {
       const p = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
       if (p && typeof p.catch === "function") {
         p.catch(() => {
           if (retries > 0 && !this.disposed) setTimeout(() => this.requestLock(retries - 1), 400);
+          else this.lockUnavailable = true; // modo "arrastar para olhar" assume
         });
       }
     } catch {
       if (retries > 0 && !this.disposed) setTimeout(() => this.requestLock(retries - 1), 400);
+      else this.lockUnavailable = true;
     }
   }
 
@@ -388,6 +395,13 @@ export class Game implements UIHost {
         break;
       case "Escape":
         if (this.state === "inventory") { e.preventDefault(); this.closeInventory(); }
+        else if (this.state === "playing" && !this.locked) {
+          // sem pointer lock, o ESC manual abre a pausa
+          this.state = "paused";
+          this.mouseL = false; this.mouseR = false;
+          this.ui.setMineProgress(0);
+          this.ui.showPause(true);
+        }
         break;
       default: {
         if (e.code.startsWith("Digit") && this.state === "playing") {
@@ -410,7 +424,10 @@ export class Game implements UIHost {
   };
 
   private onMouseMove = (e: MouseEvent): void => {
-    if (!this.locked || this.state !== "playing") return;
+    if (this.state !== "playing") return;
+    // com pointer lock: o mouse sempre olha. sem lock (fallback): olhar arrastando
+    const dragging = !this.locked && (this.mouseL || this.mouseR);
+    if (!this.locked && !dragging) return;
     const sens = 0.0022 * this.settings.sensibilidade;
     this.player.yaw -= e.movementX * sens;
     this.player.pitch -= e.movementY * sens;
@@ -422,16 +439,15 @@ export class Game implements UIHost {
     this.audio.unlock();
     // cliques na UI (hotbar, telas) não são ações de jogo
     const t = e.target as HTMLElement | null;
-    if (t && t.closest && t.closest(".hotbar, .screen, .toasts")) return;
-    if (this.state === "playing" && !this.locked) {
-      this.requestLock(4);
-      return;
-    }
-    if (this.state !== "playing" || !this.locked) return;
-    if (e.button === 0) { this.mouseL = true; }
-    else if (e.button === 2) {
+    if (t && t.closest && t.closest(".hotbar, .screen, .toasts, .drag-ghost")) return;
+    if (this.state !== "playing") return;
+    if (!this.locked && !this.lockUnavailable) this.requestLock(2);
+    if (e.button === 0) {
+      this.mouseL = true;
+    } else if (e.button === 2) {
       this.mouseR = true;
-      this.tryPlace();
+      if (this.locked) this.tryPlace();
+      else { this.rDownX = e.clientX; this.rDownY = e.clientY; } // solta sem arrastar → coloca
     } else if (e.button === 1) {
       e.preventDefault();
       this.pickBlock();
@@ -440,7 +456,13 @@ export class Game implements UIHost {
 
   private onMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) { this.mouseL = false; this.mineProgress = 0; this.mineKey = ""; this.ui.setMineProgress(0); }
-    if (e.button === 2) this.mouseR = false;
+    if (e.button === 2) {
+      if (!this.locked && this.mouseR && this.state === "playing") {
+        const dx = e.clientX - this.rDownX, dy = e.clientY - this.rDownY;
+        if (dx * dx + dy * dy < 64) this.tryPlace(); // clique curto = colocar bloco
+      }
+      this.mouseR = false;
+    }
   };
 
   private onWheel = (e: WheelEvent): void => {
