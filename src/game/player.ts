@@ -10,7 +10,8 @@ export interface MoveInput {
   forward: number; // -1..1
   strafe: number; // -1..1
   jump: boolean;
-  sprint: boolean;
+  sprint: boolean; // Ctrl
+  crouch: boolean; // Shift
 }
 
 export class Player {
@@ -25,6 +26,8 @@ export class Player {
   wasInWater = false;
   /** modo voo (criativo) */
   fly = false;
+  /** agachado (Shift) — anda devagar e abaixa a câmera */
+  crouching = false;
   /** distância acumulada da queda atual (para dano) */
   fallDist = 0;
 
@@ -41,7 +44,8 @@ export class Player {
   private stepAcc = 0;
 
   get eyePosition(): THREE.Vector3 {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.eye, this.pos.z);
+    const eyeY = this.eye - (this.crouching ? 0.28 : 0);
+    return new THREE.Vector3(this.pos.x, this.pos.y + eyeY, this.pos.z);
   }
 
   update(dt: number, input: MoveInput, world: World): void {
@@ -62,8 +66,12 @@ export class Player {
     if (this.inWater && !this.wasInWater && this.vel.y < -4) this.onSplash?.();
     this.wasInWater = this.inWater;
 
-    const sprinting = input.sprint && f > 0 && !this.inWater && !this.fly;
-    const speed = this.fly ? (input.sprint ? 17 : 9.5) : this.inWater ? 3.1 : sprinting ? 6.3 : 4.2;
+    // agachar (Shift) — no chão, fora d'água e sem voar
+    this.crouching = input.crouch && this.onGround && !this.inWater && !this.fly;
+
+    const sprinting = input.sprint && f > 0 && !this.inWater && !this.fly && !this.crouching;
+    const baseSpeed = this.crouching ? 1.7 : sprinting ? 6.3 : 4.2;
+    const speed = this.fly ? (input.crouch ? 5 : 9.5) : this.inWater ? 3.1 : baseSpeed;
 
     const rate = this.fly ? 12 : this.onGround ? 16 : this.inWater ? 8 : 4.5;
     const k = 1 - Math.exp(-rate * dt);
@@ -71,14 +79,18 @@ export class Player {
     this.vel.z += (wz * speed - this.vel.z) * k;
 
     if (this.fly) {
-      // voo criativo: espaço sobe, shift desce
-      const vy = input.jump ? 1 : input.sprint ? -1 : 0;
+      // voo criativo: espaço sobe, Shift (agachar) desce
+      const vy = input.jump ? 1 : input.crouch ? -1 : 0;
       this.vel.y += (vy * 9 - this.vel.y) * (1 - Math.exp(-10 * dt));
       this.fallDist = 0;
     } else if (this.inWater) {
       this.vel.y -= 7 * dt;
       this.vel.y = Math.max(this.vel.y, -3.2);
-      if (input.jump) this.vel.y = 3.6;
+      if (input.jump) {
+        // perto da superfície dá um impulso maior para conseguir sair da água
+        const above = world.getBlock(Math.floor(this.pos.x), Math.floor(this.pos.y + this.height + 0.2), Math.floor(this.pos.z));
+        this.vel.y = above === B.AIR || above === B.AGUA ? 5.6 : 3.6;
+      }
       this.fallDist = 0;
     } else {
       this.vel.y -= 26 * dt;

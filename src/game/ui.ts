@@ -92,7 +92,7 @@ export class UI {
   private resultSlot3!: HTMLElement;
   private settingsCtx: "menu" | "pause" = "menu";
   private held: { item: ItemStack; area: Area; index: number } | null = null;
-  private didDrop = false;
+  private dragButton = 0;
   private ghost!: HTMLElement;
   private currentRecipe: Recipe | null = null;
   private currentRecipe3: Recipe | null = null;
@@ -649,12 +649,8 @@ export class UI {
     e.stopPropagation();
     if (e.button !== 0 && e.button !== 2) return;
 
-    if (this.held) {
-      // já segurando algo → soltar neste slot (esq: pilha, dir: 1 unidade)
-      this.dropOn(area, index, e.button === 2);
-      this.didDrop = true;
-      return;
-    }
+    // modelo arrastar-e-soltar: mousedown SEMPRE pega (o mouseup solta no destino)
+    if (this.held) return;
     const stack = this.getSlotStack(area, index);
     if (!stack) return;
     if (e.button === 0) {
@@ -666,7 +662,7 @@ export class UI {
       const rest = stack.count - half;
       this.setSlotStack(area, index, rest > 0 ? { ...stack, count: rest } : null);
     }
-    this.didDrop = false;
+    this.dragButton = e.button;
     this.showGhost();
     this.ghost.style.left = e.clientX + 12 + "px";
     this.ghost.style.top = e.clientY + 12 + "px";
@@ -740,20 +736,27 @@ export class UI {
     this.ghost.style.top = e.clientY + 12 + "px";
   };
 
-  private onDragEnd = (): void => {
+  private onDragEnd = (e: MouseEvent): void => {
     if (!this.held) return;
-    // sobras voltam para a origem (se não houve drop, a pilha inteira)
-    const back = this.getSlotStack(this.held.area, this.held.index);
-    if (!back) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
-    else if (back.id === this.held.item.id) {
-      const max = itemDef(back.id).maxStack;
-      const move = Math.min(max - back.count, this.held.item.count);
-      back.count += move;
-      this.held.item.count -= move;
-      if (this.held.item.count > 0) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
+    // solta no slot que estiver sob o cursor (arrastar-e-soltar)
+    const under = (e.target as HTMLElement | null)?.closest?.(".slot") as HTMLElement | null;
+    const ref = under ? this.invSlots.get(under) : undefined;
+    if (ref) {
+      this.dropOn(ref.area, ref.index, false);
     }
-    this.held = null;
-    this.didDrop = false;
+    // se ainda restou algo na mão (sem drop ou pilha parcial), devolve à origem
+    if (this.held) {
+      const back = this.getSlotStack(this.held.area, this.held.index);
+      if (!back) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
+      else if (back.id === this.held.item.id) {
+        const max = itemDef(back.id).maxStack;
+        const move = Math.min(max - back.count, this.held.item.count);
+        back.count += move;
+        this.held.item.count -= move;
+        if (this.held.item.count > 0) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
+      }
+      this.held = null;
+    }
     this.ghost.style.display = "none";
     this.afterMutate();
   };

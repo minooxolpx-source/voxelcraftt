@@ -18,6 +18,7 @@ export interface Chunk {
   blocks: Uint8Array;
   mesh: THREE.Mesh | null;
   waterMesh: THREE.Mesh | null;
+  glassMesh: THREE.Mesh | null;
   needsMesh: boolean;
 }
 
@@ -190,7 +191,7 @@ export class World {
     this.oreBlobs(blocks, x0, z0, r, B.FERRO, 6, 4, 24, 3);
     this.oreBlobs(blocks, x0, z0, r, B.DIAMANTE, 3, 2, 12, 3); // raro e profundo
 
-    const chunk: Chunk = { cx, cz, blocks, mesh: null, waterMesh: null, needsMesh: true };
+    const chunk: Chunk = { cx, cz, blocks, mesh: null, waterMesh: null, glassMesh: null, needsMesh: true };
     this.chunks.set(key, chunk);
 
     // árvores: considera troncos numa margem expandida p/ folhas cruzarem chunks
@@ -362,6 +363,11 @@ export class World {
       chunk.waterMesh.geometry.dispose();
       chunk.waterMesh = null;
     }
+    if (chunk.glassMesh) {
+      this.scene.remove(chunk.glassMesh);
+      chunk.glassMesh.geometry.dispose();
+      chunk.glassMesh = null;
+    }
     if (data.opaque) {
       chunk.mesh = new THREE.Mesh(data.opaque, this.opaqueMat);
       chunk.mesh.matrixAutoUpdate = false;
@@ -375,6 +381,13 @@ export class World {
       chunk.waterMesh.renderOrder = 2;
       this.scene.add(chunk.waterMesh);
     }
+    if (data.glass) {
+      chunk.glassMesh = new THREE.Mesh(data.glass, this.tex.glassMaterial);
+      chunk.glassMesh.matrixAutoUpdate = false;
+      chunk.glassMesh.updateMatrix();
+      chunk.glassMesh.renderOrder = 3;
+      this.scene.add(chunk.glassMesh);
+    }
   }
 
   private remeshChunk(cx: number, cz: number): void {
@@ -385,6 +398,7 @@ export class World {
   private disposeChunk(c: Chunk): void {
     if (c.mesh) { this.scene.remove(c.mesh); c.mesh.geometry.dispose(); }
     if (c.waterMesh) { this.scene.remove(c.waterMesh); c.waterMesh.geometry.dispose(); }
+    if (c.glassMesh) { this.scene.remove(c.glassMesh); c.glassMesh.geometry.dispose(); }
   }
 
   get loadedCount(): number { return this.chunks.size; }

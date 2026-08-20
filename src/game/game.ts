@@ -60,7 +60,7 @@ export class Game implements UIHost {
   private spawn = new THREE.Vector3(8.5, 40, 8.5);
 
   // input
-  private keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+  private keys = { w: false, a: false, s: false, d: false, space: false, shift: false, ctrl: false };
   private mouseL = false;
   private mouseR = false;
   private lockUnavailable = false;
@@ -443,10 +443,14 @@ export class Game implements UIHost {
     }
   }
 
+  private clearKeys(): void {
+    this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false, ctrl: false };
+  }
+
   private openInventory(): void {
     this.state = "inventory";
     this.mouseL = false; this.mouseR = false;
-    this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+    this.clearKeys();
     this.ui.showInventory(true);
     this.ui.setMineProgress(0);
     this.releaseLock();
@@ -461,7 +465,7 @@ export class Game implements UIHost {
   private openWorkbench(): void {
     this.state = "crafting";
     this.mouseL = false; this.mouseR = false;
-    this.keys = { w: false, a: false, s: false, d: false, space: false, shift: false };
+    this.clearKeys();
     this.ui.showWorkbench(true);
     this.ui.setMineProgress(0);
     this.releaseLock();
@@ -506,6 +510,7 @@ export class Game implements UIHost {
         }
         break;
       case "ShiftLeft": case "ShiftRight": this.keys.shift = true; break;
+      case "ControlLeft": case "ControlRight": this.keys.ctrl = true; e.preventDefault(); break;
       case "KeyF":
         if (this.state === "playing") this.toggleFly();
         break;
@@ -541,6 +546,7 @@ export class Game implements UIHost {
       case "KeyD": this.keys.d = false; break;
       case "Space": this.keys.space = false; break;
       case "ShiftLeft": case "ShiftRight": this.keys.shift = false; break;
+      case "ControlLeft": case "ControlRight": this.keys.ctrl = false; break;
     }
   };
 
@@ -958,14 +964,15 @@ export class Game implements UIHost {
     this.player.update(dt, {
       forward: fwd, strafe,
       jump: this.keys.space,
-      sprint: this.keys.shift,
+      sprint: this.keys.ctrl, // Ctrl = correr
+      crouch: this.keys.shift, // Shift = agachar
     }, this.world);
 
     const eye = this.player.eyePosition;
     this.camera.position.copy(eye);
     this.camera.rotation.set(this.player.pitch, this.player.yaw, 0);
 
-    const sprinting = this.keys.shift && fwd > 0 && !this.player.inWater && !this.player.fly;
+    const sprinting = this.keys.ctrl && fwd > 0 && !this.player.inWater && !this.player.fly && !this.keys.shift;
     const targetFov = this.settings.fov + (sprinting ? 8 : 0);
     if (Math.abs(this.camera.fov - targetFov) > 0.05) {
       this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, 10 * dt);

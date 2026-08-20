@@ -29,6 +29,7 @@ export type BlockGetter = (x: number, y: number, z: number) => number;
 export interface ChunkMeshData {
   opaque: THREE.BufferGeometry | null;
   water: THREE.BufferGeometry | null;
+  glass: THREE.BufferGeometry | null;
 }
 
 class GeoBuf {
@@ -71,7 +72,12 @@ class GeoBuf {
   }
 }
 
-const isOpaque = (id: number) => id !== B.AIR && id !== B.AGUA;
+/** líquidos e translúcidos não ocluem faces dos vizinhos */
+const isOpaque = (id: number) =>
+  id !== B.AIR && id !== B.AGUA && id !== B.LAVA && id !== B.VIDRO && id !== B.GELO;
+
+const isLiquid = (id: number) => id === B.AGUA || id === B.LAVA;
+const isGlass = (id: number) => id === B.VIDRO || id === B.GELO;
 
 /**
  * Constroi as geometrias de um chunk em (cx, cz).
@@ -81,6 +87,7 @@ const isOpaque = (id: number) => id !== B.AIR && id !== B.AGUA;
 export function buildChunkMesh(cx: number, cz: number, local: Uint8Array, get: BlockGetter): ChunkMeshData {
   const solid = new GeoBuf();
   const water = new GeoBuf();
+  const glass = new GeoBuf();
   const x0 = cx * CHUNK;
   const z0 = cz * CHUNK;
 
@@ -99,14 +106,26 @@ export function buildChunkMesh(cx: number, cz: number, local: Uint8Array, get: B
         if (id === B.AIR) continue;
         const bd = blockDef(id);
 
-        if (id === B.AGUA) {
+        if (isLiquid(id)) {
           const above = read(wx, wy + 1, wz);
           for (const face of FACES) {
             const n = read(wx + face.dir[0], wy + face.dir[1], wz + face.dir[2]);
-            // água: só desenha face contra ar (superfície + bordas visíveis)
-            if (n !== B.AIR) continue;
-            const topY = above === B.AIR ? 0.88 : 1;
+            // líquido: desenha face contra ar ou vidro (não contra outro bloco)
+            if (n !== B.AIR && !isGlass(n)) continue;
+            // água tem topo rebaixado; lava ocupa o cubo cheio
+            const topY = id === B.AGUA && above === B.AIR ? 0.88 : 1;
             water.addFace(wx, wy, wz, face, bd.tiles[face.dir[1] === 1 ? 0 : face.dir[1] === -1 ? 2 : 1], face.shade, topY);
+          }
+          continue;
+        }
+
+        if (isGlass(id)) {
+          for (const face of FACES) {
+            const n = read(wx + face.dir[0], wy + face.dir[1], wz + face.dir[2]);
+            // vidro/gelo: face contra ar ou líquido (não contra outro vidro do mesmo tipo)
+            if (isOpaque(n) || n === id) continue;
+            const tile = bd.tiles[1];
+            glass.addFace(wx, wy, wz, face, tile, face.shade);
           }
           continue;
         }
@@ -121,7 +140,7 @@ export function buildChunkMesh(cx: number, cz: number, local: Uint8Array, get: B
     }
   }
 
-  return { opaque: solid.build(), water: water.build() };
+  return { opaque: solid.build(), water: water.build(), glass: glass.build() };
 }
 
 /** Índice local de um bloco dentro do chunk (x rápido, depois z, depois y). */
