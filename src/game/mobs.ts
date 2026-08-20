@@ -46,6 +46,8 @@ export class Mob {
   private box(w: number, h: number, d: number, color: number, x: number, y: number, z: number, leg = false): THREE.Mesh {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), this.mat(color));
     m.position.set(x, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
     this.group.add(m);
     if (leg) this.legs.push(m);
     return m;

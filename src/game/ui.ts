@@ -566,9 +566,12 @@ export class UI {
     this.invScreen.style.display = "none";
     const wrap = el("div", "inv-wrap");
 
-    // crafting 3×3 (quadrado)
+    // topo clássico: receitas à esquerda, fabricação à direita (como no original)
+    const top = el("div", "inv-top");
+    const recPanel = this.buildRecipePanel();
+
     const craftPanel = el("div", "panel inv-panel");
-    craftPanel.innerHTML = `<h3 class="inv-title">Fabricação 3×3</h3>`;
+    craftPanel.innerHTML = `<h3 class="inv-title">Fabricação</h3>`;
     const craftRow = el("div", "craft-row");
     const grid = el("div", "craft-grid craft-grid-3");
     for (let i = 0; i < 9; i++) grid.appendChild(this.makeSlot("craft", i));
@@ -576,20 +579,7 @@ export class UI {
     craftRow.append(grid, this.arrowEl(), this.resultSlot);
     craftPanel.appendChild(craftRow);
 
-    // receitas
-    const recPanel = el("div", "panel inv-panel rec-panel");
-    recPanel.innerHTML = `<h3 class="inv-title">Receitas</h3><div class="rec-list"></div>`;
-    const recList = recPanel.querySelector(".rec-list")!;
-    for (const r of RECIPES) {
-      const row = el("div", "rec-row");
-      const inputs = Object.entries(recipeInputs(r)).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
-      const iconWrap = el("span", "rec-icon");
-      iconWrap.appendChild(copyIcon(this.tex.icon(r.output.id), 26));
-      const size = recipeSize(r);
-      const badge = el("span", "rec-badge", size);
-      row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`), badge);
-      recList.appendChild(row);
-    }
+    top.append(recPanel, craftPanel);
 
     // mochila (sobrevivência)
     this.invPanelSurvival = el("div", "panel inv-panel");
@@ -629,7 +619,7 @@ export class UI {
     for (let i = 0; i < 9; i++) hb2.appendChild(this.makeSlot("main", i));
     this.invPanelCreative.appendChild(hb2);
 
-    wrap.append(craftPanel, recPanel, this.invPanelSurvival, this.invPanelCreative);
+    wrap.append(top, this.invPanelSurvival, this.invPanelCreative);
     const esc = el("div", "inv-esc", "E ou ESC fecha · arraste para mover · clique direito num item crafta ele na hora (se houver materiais) · duplo clique junta pilhas");
     this.invScreen.append(wrap, esc);
     this.root.appendChild(this.invScreen);
@@ -637,6 +627,24 @@ export class UI {
 
   private arrowEl(): HTMLElement {
     return el("div", "craft-arrow", `<svg width="26" height="16" viewBox="0 0 26 16" fill="none"><path d="M1 8h20M15 2l7 6-7 6" stroke="#9fb3a0" stroke-width="2.4" stroke-linecap="square"/></svg>`);
+  }
+
+  /** Painel de receitas (compartilhado pelo inventário e pela bancada). */
+  private buildRecipePanel(): HTMLElement {
+    const recPanel = el("div", "panel inv-panel rec-panel");
+    recPanel.innerHTML = `<h3 class="inv-title">Receitas</h3><div class="rec-list"></div>`;
+    const recList = recPanel.querySelector(".rec-list")!;
+    for (const r of RECIPES) {
+      const row = el("div", "rec-row");
+      const inputs = Object.entries(recipeInputs(r)).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
+      const iconWrap = el("span", "rec-icon");
+      iconWrap.appendChild(copyIcon(this.tex.icon(r.output.id), 26));
+      const size = recipeSize(r);
+      const badge = el("span", "rec-badge", size);
+      row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`), badge);
+      recList.appendChild(row);
+    }
+    return recPanel;
   }
 
   private makeResult(area: "craft" | "craft3"): HTMLElement {
@@ -654,18 +662,32 @@ export class UI {
     this.wbScreen = el("div", "screen inv-screen");
     this.wbScreen.style.display = "none";
     const wrap = el("div", "inv-wrap");
-    const panel = el("div", "panel inv-panel");
-    panel.innerHTML = `<h3 class="inv-title">Bancada — Fabricação 3×3</h3>`;
-    const row = el("div", "craft-row");
+    const topRow = el("div", "inv-top");
+
+    // painel clássico: grade + seta + resultado, depois o inventário embaixo
+    const panel = el("div", "panel inv-panel bench-panel");
+    panel.innerHTML = `<h3 class="inv-title">Bancada de Trabalho</h3>`;
+    const craftTop = el("div", "craft-top");
     const grid = el("div", "craft-grid craft-grid-3");
     for (let i = 0; i < 9; i++) grid.appendChild(this.makeSlot("craft3", i));
     this.resultSlot3 = this.makeResult("craft3");
-    row.append(grid, this.arrowEl(), this.resultSlot3);
-    panel.appendChild(row);
-    panel.appendChild(el("div", "inv-esc", "Ferramentas de pedra, ferro e diamante, espadas e a cama só saem aqui."));
+    craftTop.append(grid, this.arrowEl(), this.resultSlot3);
+    panel.appendChild(craftTop);
+    panel.appendChild(el("div", "craft-sep"));
+    panel.appendChild(el("div", "inv-label", "Inventário"));
+    const gridMain = el("div", "inv-grid");
+    for (let i = 9; i < 36; i++) gridMain.appendChild(this.makeSlot("main", i));
+    panel.appendChild(gridMain);
+    const hb = el("div", "inv-grid inv-hotbar");
+    for (let i = 0; i < 9; i++) hb.appendChild(this.makeSlot("main", i));
+    panel.appendChild(hb);
+
+    const recPanel = this.buildRecipePanel();
+
     const close = el("button", "btn btn-primary set-close", "Fechar bancada");
     close.addEventListener("click", () => { this.audioTick(); this.host.invChanged(); this.hideAllScreens(); this.host.resume(); });
-    wrap.append(panel, close);
+    topRow.append(panel, recPanel);
+    wrap.append(topRow, close);
     this.wbScreen.appendChild(wrap);
     this.root.appendChild(this.wbScreen);
   }

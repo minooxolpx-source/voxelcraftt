@@ -372,6 +372,8 @@ export class World {
       chunk.mesh = new THREE.Mesh(data.opaque, this.opaqueMat);
       chunk.mesh.matrixAutoUpdate = false;
       chunk.mesh.updateMatrix();
+      chunk.mesh.castShadow = true;
+      chunk.mesh.receiveShadow = true;
       this.scene.add(chunk.mesh);
     }
     if (data.water) {
@@ -386,6 +388,7 @@ export class World {
       chunk.glassMesh.matrixAutoUpdate = false;
       chunk.glassMesh.updateMatrix();
       chunk.glassMesh.renderOrder = 3;
+      chunk.glassMesh.receiveShadow = true;
       this.scene.add(chunk.glassMesh);
     }
   }

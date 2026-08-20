@@ -205,6 +205,8 @@ export class Game implements UIHost {
 
   private init(): void {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.canvas = this.renderer.domElement;
     this.canvas.className = "game-canvas";
@@ -337,6 +339,7 @@ export class Game implements UIHost {
       const caps = [0.85, 1.5, 2];
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, caps[s.qualidade]));
     }
+    if (this.sky) this.sky.setShadowQuality(s.qualidade);
     this.syncComposerSize();
     this.applyShaderSetting();
   }

@@ -24,6 +24,14 @@ export class Sky {
 
   constructor(scene: THREE.Scene) {
     this.sun = new THREE.DirectionalLight(0xfff2d8, 1.1);
+    // sombras dinâmicas: o sol projeta sombras de chunks, mobs e drops
+    this.sun.castShadow = true;
+    this.sun.shadow.mapSize.set(2048, 2048);
+    this.sun.shadow.bias = -0.0003;
+    this.sun.shadow.normalBias = 0.7;
+    const sc = this.sun.shadow.camera;
+    sc.left = -44; sc.right = 44; sc.top = 44; sc.bottom = -44;
+    sc.near = 10; sc.far = 340;
     scene.add(this.sun);
     scene.add(this.sun.target);
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x4a5a3a, 0.65);
@@ -62,6 +70,24 @@ export class Sky {
     this.stars = new THREE.Points(g, this.starsMat);
     this.stars.frustumCulled = false;
     scene.add(this.stars);
+  }
+
+  /** Ajusta alcance/resolução das sombras conforme a qualidade gráfica. */
+  setShadowQuality(q: 0 | 1 | 2): void {
+    const size = q === 0 ? 1024 : 2048;
+    const range = [30, 44, 60][q];
+    if (this.sun.shadow.mapSize.x !== size) {
+      this.sun.shadow.mapSize.set(size, size);
+      if (this.sun.shadow.map) {
+        this.sun.shadow.map.dispose();
+        this.sun.shadow.map = null as unknown as THREE.WebGLRenderTarget;
+      }
+    }
+    const sc = this.sun.shadow.camera;
+    if (sc.left !== -range) {
+      sc.left = -range; sc.right = range; sc.top = range; sc.bottom = -range;
+      sc.updateProjectionMatrix();
+    }
   }
 
   /** hourOfDay 0–24 (para exibição no HUD). */
