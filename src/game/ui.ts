@@ -288,13 +288,14 @@ export class UI {
     const bind = (id: string, fn: (v: number) => void) => {
       const input = card.querySelector("#set-" + id) as HTMLInputElement;
       const out = card.querySelector("#out-" + id) as HTMLElement;
-      const upd = () => {
+      // label() só atualiza o texto; upd() também aplica no jogo
+      const label = () => {
         const v = parseFloat(input.value);
         out.textContent = (id === "vol" ? Math.round(v * 100) + "%" : id === "sens" ? v.toFixed(1) : String(v)) + (input.dataset.suffix ?? "");
-        fn(v);
       };
+      const upd = () => { label(); fn(parseFloat(input.value)); };
       input.addEventListener("input", upd);
-      return { input, upd };
+      return { input, label };
     };
     const s = this.host.settings;
     const b1 = bind("sens", (v) => this.host.applySettings({ sensibilidade: v }));
@@ -306,16 +307,17 @@ export class UI {
     b3.input.value = String(s.renderDist);
     b3.input.dataset.suffix = " chunks";
     b4.input.value = String(s.volume);
-    b1.upd(); b2.upd(); b3.upd(); b4.upd();
+    // sincroniza apenas os rótulos — sem disparar applySettings na construção
+    b1.label(); b2.label(); b3.label(); b4.label();
     const q = card.querySelector("#set-q") as HTMLSelectElement;
     q.value = String(s.qualidade);
     q.addEventListener("change", () => this.host.applySettings({ qualidade: parseInt(q.value, 10) as 0 | 1 | 2 }));
     this.syncSettingsInputs = () => {
       const st = this.host.settings;
-      b1.input.value = String(st.sensibilidade); b1.upd();
-      b2.input.value = String(st.fov); b2.upd();
-      b3.input.value = String(st.renderDist); b3.upd();
-      b4.input.value = String(st.volume); b4.upd();
+      b1.input.value = String(st.sensibilidade); b1.label();
+      b2.input.value = String(st.fov); b2.label();
+      b3.input.value = String(st.renderDist); b3.label();
+      b4.input.value = String(st.volume); b4.label();
       q.value = String(st.qualidade);
     };
     card.querySelector(".set-close")!.addEventListener("click", () => {

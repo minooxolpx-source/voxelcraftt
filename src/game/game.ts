@@ -97,9 +97,6 @@ export class Game implements UIHost {
     this.camera.rotation.order = "YXZ";
 
     this.tex = makeTextures();
-    // canvas primeiro, UI por cima (a raiz da UI não captura eventos do jogo)
-    this.container.appendChild(this.canvas);
-    this.ui = new UI(this.container, this, this.tex);
 
     const save = SaveManager.load();
     const seed = save?.seed ?? ((Math.random() * 2 ** 31) | 0);
@@ -136,6 +133,10 @@ export class Game implements UIHost {
     this.highlight = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }));
     this.highlight.visible = false;
     this.scene.add(this.highlight);
+
+    // UI por último: os sliders de configuração disparam applySettings(),
+    // então o host (mundo, câmera, renderer) já precisa estar pronto
+    this.ui = new UI(this.container, this, this.tex);
 
     this.applySettings({}); // aplica qualidade/pixel ratio/FOV iniciais
     this.bindInput();
@@ -212,12 +213,15 @@ export class Game implements UIHost {
   applySettings(p: Partial<Settings>): void {
     this.settings = { ...this.settings, ...p };
     const s = this.settings;
-    this.camera.fov = s.fov;
-    this.camera.updateProjectionMatrix();
+    if (this.camera) {
+      this.camera.fov = s.fov;
+      this.camera.updateProjectionMatrix();
+    }
     this.audio.setVolume(s.volume);
-    this.world.renderDist = this.effectiveRenderDist();
+    // world pode não existir ainda durante a inicialização da UI
+    if (this.world) this.world.renderDist = this.effectiveRenderDist();
     const caps = [0.85, 1.5, 2];
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, caps[s.qualidade]));
+    if (this.renderer) this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, caps[s.qualidade]));
   }
 
   private effectiveRenderDist(): number {
