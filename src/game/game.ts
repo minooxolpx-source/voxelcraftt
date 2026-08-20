@@ -5,13 +5,16 @@
  * 3×3, cama, voo criativo, mão em primeira pessoa e salvamento.
  */
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { B, ITEMS, blockDef, breakTime, itemDef, gridBounds, patternBounds, RECIPES, recipeInputs } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
 import { makeTextures } from "./textures";
 import type { TexturePack } from "./textures";
 import { AudioManager } from "./audio";
 import { SaveManager, DEFAULT_SETTINGS } from "./save";
-import type { Settings, SaveData, GameMode } from "./save";
+import type { Settings, SaveData, GameMode, ShaderMode } from "./save";
 import { World } from "./world";
 import { CHUNK, HEIGHT, SEA } from "./mesher";
 import { Player } from "./player";
@@ -27,12 +30,100 @@ type State = "loading" | "menu" | "playing" | "paused" | "inventory" | "crafting
 
 const MOB_COLORS: Record<string, number> = { porco: 0xe8a2a8, ovelha: 0xe8e8e2, sombra: 0x5a8f4a };
 
+/* ------------------------------------------------------------------ */
+/* Shaders de pós-processamento (opções gráficas)                      */
+/* ------------------------------------------------------------------ */
+
+const VERT = `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+/** Vinheta + leve gradação de cor cinematográfica. */
+const VignetteShader = {
+  uniforms: { tDiffuse: { value: null }, amount: { value: 0.85 } },
+  vertexShader: VERT,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float amount;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      vec2 d = vUv - 0.5;
+      float vig = smoothstep(0.82, 0.3, length(d) * 1.32);
+      c.rgb *= mix(1.0, vig, amount);
+      c.rgb = pow(c.rgb, vec3(0.985, 1.0, 1.045)); // leve calor
+      gl_FragColor = c;
+    }`,
+};
+
+/** Cartoon: contorno escuro por detecção de bordas (Sobel) + posterização. */
+const CartoonShader = {
+  uniforms: { tDiffuse: { value: null }, resolution: { value: new THREE.Vector2(1, 1) }, strength: { value: 1.15 } },
+  vertexShader: VERT,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float strength;
+    varying vec2 vUv;
+    float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+    void main() {
+      vec2 tx = 1.0 / resolution;
+      float tl = luma(texture2D(tDiffuse, vUv + tx * vec2(-1.0,  1.0)).rgb);
+      float t  = luma(texture2D(tDiffuse, vUv + tx * vec2( 0.0,  1.0)).rgb);
+      float tr = luma(texture2D(tDiffuse, vUv + tx * vec2( 1.0,  1.0)).rgb);
+      float l  = luma(texture2D(tDiffuse, vUv + tx * vec2(-1.0,  0.0)).rgb);
+      float r  = luma(texture2D(tDiffuse, vUv + tx * vec2( 1.0,  0.0)).rgb);
+      float bl = luma(texture2D(tDiffuse, vUv + tx * vec2(-1.0, -1.0)).rgb);
+      float b  = luma(texture2D(tDiffuse, vUv + tx * vec2( 0.0, -1.0)).rgb);
+      float br = luma(texture2D(tDiffuse, vUv + tx * vec2( 1.0, -1.0)).rgb);
+      float gx = -tl - 2.0 * l - bl + tr + 2.0 * r + br;
+      float gy = -tl - 2.0 * t - tr + bl + 2.0 * b + br;
+      float edge = clamp(length(vec2(gx, gy)) * strength, 0.0, 1.0);
+      vec4 c = texture2D(tDiffuse, vUv);
+      // posterização suave (cara de cartoon)
+      c.rgb = mix(floor(c.rgb * 7.0) / 7.0, c.rgb, 0.35);
+      c.rgb = mix(c.rgb, vec3(0.043, 0.055, 0.05), edge);
+      gl_FragColor = c;
+    }`,
+};
+
+/** Retrô: pixelização forte + scanlines sutis (CRT). */
+const RetroShader = {
+  uniforms: { tDiffuse: { value: null }, resolution: { value: new THREE.Vector2(1, 1) }, pixels: { value: 260.0 } },
+  vertexShader: VERT,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float pixels;
+    varying vec2 vUv;
+    void main() {
+      vec2 grid = vec2(pixels * resolution.x / resolution.y, pixels);
+      vec2 cell = floor(vUv * grid);
+      vec2 uv = (cell + 0.5) / grid;
+      vec4 c = texture2D(tDiffuse, uv);
+      float scan = 0.94 + 0.06 * step(0.5, fract(vUv.y * grid.y));
+      c.rgb *= scan;
+      gl_FragColor = c;
+    }`,
+};
+
 export class Game implements UIHost {
   private container: HTMLElement;
   private renderer!: THREE.WebGLRenderer;
   private scene!: THREE.Scene;
   private camera!: THREE.PerspectiveCamera;
   private canvas!: HTMLCanvasElement;
+  // pós-processamento (shaders)
+  private composer: EffectComposer | null = null;
+  private vignettePass!: ShaderPass;
+  private cartoonPass!: ShaderPass;
+  private retroPass!: ShaderPass;
+  private composerActive = false;
+  // limite de FPS
+  private lastFrameTime = 0;
   private tex!: TexturePack;
   private ui!: UI;
   private audio = new AudioManager();
@@ -151,6 +242,16 @@ export class Game implements UIHost {
     // UI por último: os controles disparam applySettings() no host já pronto
     this.ui = new UI(this.container, this, this.tex);
 
+    // pós-processamento: vinheta / cartoon / retrô (desligado por padrão)
+    this.composer = new EffectComposer(this.renderer);
+    this.composer.addPass(new RenderPass(this.scene, this.camera));
+    this.vignettePass = new ShaderPass(VignetteShader);
+    this.cartoonPass = new ShaderPass(CartoonShader);
+    this.retroPass = new ShaderPass(RetroShader);
+    this.composer.addPass(this.vignettePass);
+    this.composer.addPass(this.cartoonPass);
+    this.composer.addPass(this.retroPass);
+
     this.applySettings({});
     this.bindInput();
     this.bindPlayerHooks();
@@ -166,12 +267,18 @@ export class Game implements UIHost {
     const num = (v: unknown, min: number, max: number, dflt: number) =>
       typeof v === "number" && isFinite(v) ? Math.min(max, Math.max(min, v)) : dflt;
     const q = Math.round(num(s.qualidade, 0, 2, 1));
+    let fps = Math.round(num(s.fpsLimit, 0, 240, 0));
+    if (fps > 0 && fps < 20) fps = 20;
+    const shaderOk: ShaderMode[] = ["off", "vinheta", "cartoon", "retro"];
+    const shader = shaderOk.includes(s.shader as ShaderMode) ? (s.shader as ShaderMode) : "off";
     return {
       sensibilidade: num(s.sensibilidade, 0.2, 3, 1),
       fov: num(s.fov, 60, 110, 75),
-      renderDist: num(s.renderDist, 2, 8, 5),
+      renderDist: num(s.renderDist, 2, 32, 5),
       volume: num(s.volume, 0, 1, 0.7),
       qualidade: (q === 0 || q === 1 || q === 2 ? q : 1),
+      fpsLimit: fps,
+      shader,
     };
   }
 
@@ -230,11 +337,34 @@ export class Game implements UIHost {
       const caps = [0.85, 1.5, 2];
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, caps[s.qualidade]));
     }
+    this.syncComposerSize();
+    this.applyShaderSetting();
+  }
+
+  /** Liga/desliga os passes de shader conforme a opção escolhida. */
+  private applyShaderSetting(): void {
+    const s = this.settings.shader;
+    if (this.vignettePass) this.vignettePass.enabled = s === "vinheta";
+    if (this.cartoonPass) this.cartoonPass.enabled = s === "cartoon";
+    if (this.retroPass) this.retroPass.enabled = s === "retro";
+    this.composerActive = s !== "off" && this.composer !== null;
+  }
+
+  /** Mantém o composer no mesmo tamanho/pixelRatio do renderer. */
+  private syncComposerSize(): void {
+    if (!this.composer) return;
+    const caps = [0.85, 1.5, 2];
+    const pr = Math.min(window.devicePixelRatio || 1, caps[this.settings.qualidade]);
+    this.composer.setPixelRatio(pr);
+    this.composer.setSize(window.innerWidth, window.innerHeight);
+    const w = window.innerWidth * pr, h = window.innerHeight * pr;
+    if (this.cartoonPass) (this.cartoonPass.uniforms["resolution"].value as THREE.Vector2).set(w, h);
+    if (this.retroPass) (this.retroPass.uniforms["resolution"].value as THREE.Vector2).set(w, h);
   }
 
   private effectiveRenderDist(): number {
     const mult = [0.7, 1, 1.25][this.settings.qualidade];
-    return Math.max(2, Math.min(10, Math.round(this.settings.renderDist * mult)));
+    return Math.max(2, Math.min(32, Math.round(this.settings.renderDist * mult)));
   }
 
   /** Restaura todo o estado do jogo a partir de um save (com validação). */
@@ -716,6 +846,7 @@ export class Game implements UIHost {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.syncComposerSize();
   };
 
   private onBeforeUnload = (): void => {
@@ -999,6 +1130,13 @@ export class Game implements UIHost {
 
   private loop = (time: number): void => {
     if (this.disposed) return;
+    // limite de FPS: pula o frame se ainda não passou o intervalo mínimo
+    const limit = this.settings.fpsLimit;
+    if (limit > 0) {
+      const minInterval = 1000 / limit;
+      if (time - this.lastFrameTime < minInterval - 0.6) return;
+      this.lastFrameTime = time;
+    }
     const dt = Math.min(0.05, (time - this.lastTime) / 1000 || 0.016);
     this.lastTime = time;
 
@@ -1021,7 +1159,9 @@ export class Game implements UIHost {
     }
 
     this.particles.update(dt);
-    this.renderer.render(this.scene, this.camera);
+    // com shader ativo, renderiza pelo composer; senão, direto (mais rápido)
+    if (this.composerActive && this.composer) this.composer.render(dt);
+    else this.renderer.render(this.scene, this.camera);
 
     this.frames++;
     this.fpsTimer += dt;
@@ -1117,6 +1257,7 @@ export class Game implements UIHost {
   dispose(): void {
     this.disposed = true;
     this.renderer.setAnimationLoop(null);
+    if (this.composer) this.composer.dispose();
     window.removeEventListener("resize", this.onResize);
     window.removeEventListener("beforeunload", this.onBeforeUnload);
     window.removeEventListener("keydown", this.onKeyDown);

@@ -5,7 +5,7 @@
  */
 import { RECIPES, ITEMS, itemDef, matchRecipe, recipeInputs, recipeNeedsTable, recipeSize } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
-import type { Settings, GameMode, WorldMeta } from "./save";
+import type { Settings, GameMode, WorldMeta, ShaderMode } from "./save";
 import type { TexturePack } from "./textures";
 
 export interface UIHost {
@@ -393,8 +393,25 @@ export class UI {
       <h2 class="panel-title">Configurações</h2>
       ${sliderRow("sens", "Sensibilidade do mouse", 0.2, 3, 0.1)}
       ${sliderRow("fov", "Campo de visão (FOV)", 60, 110, 1)}
-      ${sliderRow("rd", "Distância de renderização", 2, 8, 1, " chunks")}
+      ${sliderRow("rd", "Distância de renderização", 2, 32, 1, " chunks")}
       ${sliderRow("vol", "Volume", 0, 1, 0.05)}
+      <label class="set-row"><span>Limite de FPS</span>
+        <select id="set-fps" class="set-select">
+          <option value="0">Ilimitado</option>
+          <option value="30">30 FPS</option>
+          <option value="60">60 FPS</option>
+          <option value="90">90 FPS</option>
+          <option value="120">120 FPS</option>
+          <option value="144">144 FPS</option>
+          <option value="240">240 FPS</option>
+        </select></label>
+      <label class="set-row"><span>Shaders (pós-processamento)</span>
+        <select id="set-shader" class="set-select">
+          <option value="off">Desligado</option>
+          <option value="vinheta">Vinheta</option>
+          <option value="cartoon">Cartoon (contorno)</option>
+          <option value="retro">Retrô (pixelado)</option>
+        </select></label>
       <label class="set-row"><span>Qualidade gráfica</span>
         <select id="set-q" class="set-select">
           <option value="0">Baixa</option><option value="1">Média</option><option value="2">Alta</option>
@@ -427,6 +444,15 @@ export class UI {
     const q = card.querySelector("#set-q") as HTMLSelectElement;
     q.value = String(s.qualidade);
     q.addEventListener("change", () => this.host.applySettings({ qualidade: parseInt(q.value, 10) as 0 | 1 | 2 }));
+
+    const fpsSel = card.querySelector("#set-fps") as HTMLSelectElement;
+    fpsSel.value = String(s.fpsLimit);
+    fpsSel.addEventListener("change", () => this.host.applySettings({ fpsLimit: parseInt(fpsSel.value, 10) }));
+
+    const shaderSel = card.querySelector("#set-shader") as HTMLSelectElement;
+    shaderSel.value = s.shader;
+    shaderSel.addEventListener("change", () => this.host.applySettings({ shader: shaderSel.value as ShaderMode }));
+
     this.syncSettingsInputs = () => {
       const st = this.host.settings;
       b1.input.value = String(st.sensibilidade); b1.label();
@@ -434,6 +460,8 @@ export class UI {
       b3.input.value = String(st.renderDist); b3.label();
       b4.input.value = String(st.volume); b4.label();
       q.value = String(st.qualidade);
+      fpsSel.value = String(st.fpsLimit);
+      shaderSel.value = st.shader;
     };
     card.querySelector(".set-close")!.addEventListener("click", () => {
       this.audioTick();

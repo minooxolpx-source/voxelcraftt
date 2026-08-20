@@ -8,12 +8,17 @@ import type { ItemStack } from "./blocks";
 
 export type GameMode = "survival" | "creative";
 
+/** modos de pós-processamento (shaders) */
+export type ShaderMode = "off" | "vinheta" | "cartoon" | "retro";
+
 export interface Settings {
   sensibilidade: number; // 0.2 – 3
   fov: number; // 60 – 110
-  renderDist: number; // 2 – 8 chunks
+  renderDist: number; // 2 – 32 chunks
   volume: number; // 0 – 1
   qualidade: 0 | 1 | 2; // baixa, média, alta
+  fpsLimit: number; // 0 = ilimitado · 20 – 240
+  shader: ShaderMode;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +27,8 @@ export const DEFAULT_SETTINGS: Settings = {
   renderDist: 5,
   volume: 0.7,
   qualidade: 1,
+  fpsLimit: 0,
+  shader: "off",
 };
 
 export interface SaveData {
