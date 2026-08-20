@@ -3,9 +3,9 @@
  * com durabilidade), inventário com arrastar-e-soltar, crafting 2×2 e bancada
  * 3×3, catálogo criativo, configurações, toasts e loading.
  */
-import { RECIPES, ITEMS, itemDef, matchRecipe } from "./blocks";
+import { RECIPES, ITEMS, itemDef, matchRecipe, recipeInputs, recipeNeedsTable } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
-import type { Settings, GameMode } from "./save";
+import type { Settings, GameMode, WorldMeta } from "./save";
 import type { TexturePack } from "./textures";
 
 export interface UIHost {
@@ -28,6 +28,10 @@ export interface UIHost {
   invChanged(): void;
   tryCraft(r: Recipe, area: "craft" | "craft3"): boolean;
   creativeTake(itemId: string): void;
+  worldName: string | null;
+  listWorlds(): WorldMeta[];
+  deleteWorld(name: string): void;
+  loadNamedWorld(name: string): void;
 }
 
 const el = (tag: string, cls = "", html = ""): HTMLElement => {
@@ -109,6 +113,7 @@ export class UI {
     this.buildInventory();
     this.buildWorkbench();
     this.buildSettings();
+    this.buildWorlds();
     this.buildLoading();
     this.ghost = el("div", "drag-ghost");
     this.ghost.style.display = "none";
@@ -254,6 +259,7 @@ export class UI {
       </div>
       <div class="menu-buttons">
         <button class="btn btn-primary" data-act="play"></button>
+        <button class="btn" data-act="worlds">Meus Mundos</button>
         <button class="btn" data-act="new">Novo Mundo</button>
         <button class="btn" data-act="settings">Configurações</button>
       </div>
@@ -263,6 +269,7 @@ export class UI {
       CONTROLS.map(([k, v]) => `<div class="ctl"><kbd>${k}</kbd><span>${v}</span></div>`).join("") + `</div>`;
     this.mainMenu.append(left, right);
     this.mainMenu.querySelector('[data-act="play"]')!.addEventListener("click", () => { this.audioTick(); this.host.startContinue(); });
+    this.mainMenu.querySelector('[data-act="worlds"]')!.addEventListener("click", () => { this.audioTick(); this.showWorlds(); });
     this.mainMenu.querySelector('[data-act="new"]')!.addEventListener("click", () => { this.audioTick(); this.host.newWorld(); });
     this.mainMenu.querySelector('[data-act="settings"]')!.addEventListener("click", () => { this.audioTick(); this.openSettings("menu"); });
     (this.mainMenu.querySelector(".seed-val") as HTMLElement).textContent = String(this.host.seed);
@@ -448,6 +455,80 @@ export class UI {
     else this.pauseMenu.style.display = "flex";
   }
 
+  /* ---------------- Meus Mundos ---------------- */
+
+  private worldsScreen!: HTMLElement;
+  private worldsList!: HTMLElement;
+
+  private buildWorlds(): void {
+    this.worldsScreen = el("div", "screen");
+    this.worldsScreen.style.display = "none";
+    const card = el("div", "panel settings-panel");
+    card.innerHTML = `<h2 class="panel-title">Meus Mundos</h2><div class="worlds-list"></div>
+      <button class="btn btn-primary set-close">Voltar</button>`;
+    this.worldsList = card.querySelector(".worlds-list")!;
+    card.querySelector(".set-close")!.addEventListener("click", () => {
+      this.audioTick();
+      this.worldsScreen.style.display = "none";
+      this.mainMenu.style.display = "flex";
+    });
+    this.worldsScreen.appendChild(card);
+    this.root.appendChild(this.worldsScreen);
+  }
+
+  private showWorlds(): void {
+    this.mainMenu.style.display = "none";
+    this.refreshWorldsList();
+    this.worldsScreen.style.display = "flex";
+  }
+
+  private refreshWorldsList(): void {
+    this.worldsList.innerHTML = "";
+    const worlds = this.host.listWorlds();
+    if (worlds.length === 0) {
+      this.worldsList.appendChild(el("div", "worlds-empty", "Nenhum mundo salvo ainda. Crie um em “Novo Mundo”."));
+      return;
+    }
+    for (const w of worlds) {
+      const row = el("div", "world-row");
+      const info = el("div", "world-info");
+      const name = el("div", "world-name", this.escapeHtml(w.name));
+      if (w.name === this.host.worldName) name.appendChild(el("span", "world-current", "atual"));
+      const meta = el("div", "world-meta",
+        `${w.mode === "creative" ? "Criativo" : "Sobrevivência"} · seed ${w.seed} · ${this.formatDate(w.savedAt)}`);
+      info.append(name, meta);
+
+      const play = el("button", "btn btn-primary world-btn", "Jogar");
+      play.addEventListener("click", () => { this.audioTick(); this.host.loadNamedWorld(w.name); });
+
+      const del = el("button", "btn world-btn world-del", "Excluir");
+      del.addEventListener("click", () => {
+        if (del.dataset.confirm) {
+          this.audioTick();
+          this.host.deleteWorld(w.name);
+          this.refreshWorldsList();
+        } else {
+          del.dataset.confirm = "1";
+          del.textContent = "Confirmar?";
+          setTimeout(() => { delete del.dataset.confirm; del.textContent = "Excluir"; }, 2500);
+        }
+      });
+
+      row.append(info, play, del);
+      this.worldsList.appendChild(row);
+    }
+  }
+
+  private formatDate(ts: number): string {
+    if (!ts) return "—";
+    try { return new Date(ts).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }); }
+    catch { return "—"; }
+  }
+
+  private escapeHtml(s: string): string {
+    return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  }
+
   /* ---------------- Inventário + Crafting ---------------- */
 
   private buildInventory(): void {
@@ -471,10 +552,11 @@ export class UI {
     const recList = recPanel.querySelector(".rec-list")!;
     for (const r of RECIPES) {
       const row = el("div", "rec-row");
-      const inputs = Object.entries(r.inputs).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
+      const inputs = Object.entries(recipeInputs(r)).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
       const iconWrap = el("span", "rec-icon");
       iconWrap.appendChild(copyIcon(this.tex.icon(r.output.id), 26));
-      const badge = el("span", "rec-badge" + (r.table ? " rec-badge-3" : ""), r.table ? "3×3" : "2×2");
+      const needsTable = recipeNeedsTable(r);
+      const badge = el("span", "rec-badge" + (needsTable ? " rec-badge-3" : ""), needsTable ? "3×3" : "2×2");
       row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`), badge);
       recList.appendChild(row);
     }
@@ -620,14 +702,14 @@ export class UI {
         countEl.textContent = "";
       }
     }
-    this.refreshResult(this.resultSlot, this.host.craftGrid, false);
-    this.refreshResult(this.resultSlot3, this.host.craftGrid3, true);
-    this.currentRecipe = matchRecipe(this.host.craftGrid, false);
-    this.currentRecipe3 = matchRecipe(this.host.craftGrid3, true);
+    this.refreshResult(this.resultSlot, this.host.craftGrid, 2);
+    this.refreshResult(this.resultSlot3, this.host.craftGrid3, 3);
+    this.currentRecipe = matchRecipe(this.host.craftGrid, 2);
+    this.currentRecipe3 = matchRecipe(this.host.craftGrid3, 3);
   }
 
-  private refreshResult(slot: HTMLElement, grid: (ItemStack | null)[], table: boolean): void {
-    const rec = matchRecipe(grid, table);
+  private refreshResult(slot: HTMLElement, grid: (ItemStack | null)[], width: number): void {
+    const rec = matchRecipe(grid, width);
     const old = slot.querySelector("canvas");
     if (old) old.remove();
     slot.querySelector(".slot-count")?.remove();

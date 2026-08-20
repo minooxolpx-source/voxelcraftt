@@ -402,6 +402,38 @@ export const RECIPES: Recipe[] = [
   R([" A ", "ACA", " A "], { A: "areia", C: "minerio_carvao" }, "vidro", 4),
 ];
 
+/** Bounding box do padrão da receita (ignora espaços no contorno). */
+export function patternBounds(r: Recipe): { minX: number; minY: number; maxX: number; maxY: number } {
+  let minX = 99, maxX = -1, minY = 99, maxY = -1;
+  for (let y = 0; y < r.pattern.length; y++)
+    for (let x = 0; x < r.pattern[y].length; x++)
+      if (r.pattern[y][x] !== " ") {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+  return { minX, minY, maxX, maxY };
+}
+
+/** Itens totais que a receita consome (para listas/legendas de receita). */
+export function recipeInputs(r: Recipe): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const row of r.pattern)
+    for (const ch of row)
+      if (ch !== " ") {
+        const id = r.keys[ch];
+        counts[id] = (counts[id] ?? 0) + 1;
+      }
+  return counts;
+}
+
+/** Receita maior que 2×2? → exige a bancada 3×3. */
+export function recipeNeedsTable(r: Recipe): boolean {
+  const b = patternBounds(r);
+  return (b.maxX - b.minX + 1) > 2 || (b.maxY - b.minY + 1) > 2;
+}
+
 /** Bounding box das células ocupadas da grade (largura = 2 ou 3). */
 export function gridBounds(grid: (ItemStack | null)[], width: number): { minX: number; minY: number; maxX: number; maxY: number } | null {
   let minX = 99, maxX = -1, minY = 99, maxY = -1;
@@ -430,17 +462,9 @@ export function matchRecipe(grid: (ItemStack | null)[], width: number): Recipe |
   const gw = b.maxX - b.minX + 1, gh = b.maxY - b.minY + 1;
 
   for (const r of RECIPES) {
-    // bounding box do padrão (ignora linhas/colunas de espaço no contorno)
-    let pMinX = 99, pMaxX = -1, pMinY = 99, pMaxY = -1;
-    for (let y = 0; y < r.pattern.length; y++)
-      for (let x = 0; x < r.pattern[y].length; x++)
-        if (r.pattern[y][x] !== " ") {
-          if (x < pMinX) pMinX = x;
-          if (x > pMaxX) pMaxX = x;
-          if (y < pMinY) pMinY = y;
-          if (y > pMaxY) pMaxY = y;
-        }
-    const pw = pMaxX - pMinX + 1, ph = pMaxY - pMinY + 1;
+    const pb = patternBounds(r);
+    const pMinX = pb.minX, pMinY = pb.minY;
+    const pw = pb.maxX - pb.minX + 1, ph = pb.maxY - pb.minY + 1;
     if (pw !== gw || ph !== gh) continue;
 
     let ok = true;

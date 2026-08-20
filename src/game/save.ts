@@ -1,9 +1,12 @@
 /**
- * SaveManager — persistência em localStorage.
- * Guarda: posição, inventário, configurações, seed e os "deltas" de terreno
- * (blocos removidos/colocados pelo jogador), permitindo mundos infinitos salvos.
+ * SaveManager — persistência em localStorage com suporte a MÚLTIPLOS MUNDOS.
+ * Registro: voxelworld_worlds_v1 = { [nome]: SaveData }
+ * Mundo atual: voxelworld_current_v1 = nome
+ * Saves antigos (voxelworld_save_v1) são migrados automaticamente como "Mundo 1".
  */
 import type { ItemStack } from "./blocks";
+
+export type GameMode = "survival" | "creative";
 
 export interface Settings {
   sensibilidade: number; // 0.2 – 3
@@ -21,8 +24,6 @@ export const DEFAULT_SETTINGS: Settings = {
   qualidade: 1,
 };
 
-export type GameMode = "survival" | "creative";
-
 export interface SaveData {
   version: number;
   seed: number;
@@ -35,47 +36,114 @@ export interface SaveData {
   mode?: GameMode;
   health?: number;
   bedSpawn?: { x: number; y: number; z: number } | null;
+  /** timestamp da última gravação (para ordenar a lista) */
+  savedAt?: number;
 }
 
-const KEY = "voxelworld_save_v1";
+export interface WorldMeta {
+  name: string;
+  seed: number;
+  mode: GameMode;
+  savedAt: number;
+}
+
+const REG_KEY = "voxelworld_worlds_v1";
+const CUR_KEY = "voxelworld_current_v1";
+const LEGACY_KEY = "voxelworld_save_v1";
+
+function readRegistry(): Record<string, SaveData> {
+  try {
+    const raw = localStorage.getItem(REG_KEY);
+    if (raw) {
+      const reg = JSON.parse(raw);
+      if (reg && typeof reg === "object") return reg;
+    }
+  } catch (e) {
+    console.error("[SaveManager] Registro corrompido:", e);
+  }
+  // migração do save único antigo
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const data = JSON.parse(legacy) as SaveData;
+      if (data && data.version === 1 && Array.isArray(data.inventory)) {
+        return { "Mundo 1": data };
+      }
+    }
+  } catch {
+    /* legado inválido — ignora */
+  }
+  return {};
+}
+
+function writeRegistry(reg: Record<string, SaveData>): boolean {
+  try {
+    localStorage.setItem(REG_KEY, JSON.stringify(reg));
+    return true;
+  } catch (e) {
+    console.error("[SaveManager] Falha ao salvar (armazenamento cheio?):", e);
+    return false;
+  }
+}
 
 export const SaveManager = {
-  load(): SaveData | null {
+  listWorlds(): WorldMeta[] {
+    const reg = readRegistry();
+    return Object.entries(reg)
+      .map(([name, d]) => ({
+        name,
+        seed: d.seed,
+        mode: (d.mode ?? "survival") as GameMode,
+        savedAt: d.savedAt ?? 0,
+      }))
+      .sort((a, b) => b.savedAt - a.savedAt);
+  },
+
+  loadWorld(name: string): SaveData | null {
     try {
-      const raw = localStorage.getItem(KEY);
-      if (!raw) return null;
-      const data = JSON.parse(raw) as SaveData;
+      const data = readRegistry()[name];
       if (!data || data.version !== 1 || !Array.isArray(data.inventory)) return null;
       return data;
     } catch (e) {
-      console.error("[SaveManager] Falha ao ler save:", e);
+      console.error("[SaveManager] Falha ao ler mundo:", e);
       return null;
     }
   },
 
-  save(data: SaveData): boolean {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(data));
-      return true;
-    } catch (e) {
-      console.error("[SaveManager] Falha ao salvar (armazenamento cheio?):", e);
-      return false;
+  saveWorld(name: string, data: SaveData): boolean {
+    const reg = readRegistry();
+    reg[name] = { ...data, savedAt: Date.now() };
+    const ok = writeRegistry(reg);
+    if (ok) this.setCurrent(name);
+    return ok;
+  },
+
+  deleteWorld(name: string): void {
+    const reg = readRegistry();
+    delete reg[name];
+    writeRegistry(reg);
+    if (this.currentName() === name) {
+      try { localStorage.removeItem(CUR_KEY); } catch { /* noop */ }
     }
   },
 
-  clear(): void {
-    try {
-      localStorage.removeItem(KEY);
-    } catch (e) {
-      console.error("[SaveManager] Falha ao limpar save:", e);
-    }
+  /** Próximo nome livre no formato "Mundo N". */
+  nextWorldName(): string {
+    const reg = readRegistry();
+    let n = Object.keys(reg).length + 1;
+    while (reg["Mundo " + n]) n++;
+    return "Mundo " + n;
+  },
+
+  setCurrent(name: string): void {
+    try { localStorage.setItem(CUR_KEY, name); } catch { /* noop */ }
+  },
+
+  currentName(): string | null {
+    try { return localStorage.getItem(CUR_KEY); } catch { return null; }
   },
 
   hasSave(): boolean {
-    try {
-      return localStorage.getItem(KEY) !== null;
-    } catch {
-      return false;
-    }
+    return Object.keys(readRegistry()).length > 0;
   },
 };

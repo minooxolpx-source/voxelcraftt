@@ -79,12 +79,10 @@ const PAINTERS: Record<number, Painter> = {
     c.fillRect(7, 7, 2, 2);
   },
   [T.FOLHAS]: (c, r) => speckle(c, r, "#3c7a26", [["#2f611d", 0.24], ["#4d9430", 0.18], ["#244d16", 0.1]]),
-  [T.AGUA]: (c, r) => {
-    speckle(c, r, "#2f7fc2", [["#41a0e8", 0.18], ["#2a6ea8", 0.14], ["#7cc4f0", 0.06]]);
-    c.fillStyle = "#a8e2ff";
-    for (let y = 2; y < PX; y += 4)
-      for (let x = 0; x < PX; x++)
-        if ((x + y * 2 + Math.floor(r() * 2)) % 9 < 2) c.fillRect(x, y, 2, 1);
+  // água: cor azul sólida, sem textura/ondulação (pedido do usuário)
+  [T.AGUA]: (c) => {
+    c.fillStyle = "#3f76e4";
+    c.fillRect(0, 0, PX, PX);
   },
   [T.CARVAO]: (c, r) => {
     PAINTERS[T.PEDRA](c, r);

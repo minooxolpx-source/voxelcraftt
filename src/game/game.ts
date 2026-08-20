@@ -5,7 +5,7 @@
  * 3×3, cama, voo criativo, mão em primeira pessoa e salvamento.
  */
 import * as THREE from "three";
-import { B, ITEMS, blockDef, breakTime, itemDef } from "./blocks";
+import { B, ITEMS, blockDef, breakTime, itemDef, gridBounds, patternBounds } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
 import { makeTextures } from "./textures";
 import type { TexturePack } from "./textures";
@@ -58,6 +58,8 @@ export class Game implements UIHost {
   private expectUnlock = false;
   private started = false;
   private spawn = new THREE.Vector3(8.5, 40, 8.5);
+  /** nome do mundo ativo (sistema de múltiplos mundos salvos) */
+  worldName: string | null = null;
 
   // input
   private keys = { w: false, a: false, s: false, d: false, space: false, shift: false, ctrl: false };
@@ -124,37 +126,14 @@ export class Game implements UIHost {
 
     this.tex = makeTextures();
 
-    const save = SaveManager.load();
+    // mundo atual = último jogado (ou o primeiro da lista); save antigo é migrado
+    const worlds = SaveManager.listWorlds();
+    const cur = SaveManager.currentName();
+    this.worldName = cur && worlds.some((w) => w.name === cur) ? cur : worlds[0]?.name ?? null;
+    const save = this.worldName ? SaveManager.loadWorld(this.worldName) : null;
     const seed = save?.seed ?? ((Math.random() * 2 ** 31) | 0);
     this.world = new World(this.scene, this.tex, seed);
-    if (save) {
-      this.world.loadDeltas(save.deltas ?? {});
-      this.settings = this.sanitizeSettings({ ...DEFAULT_SETTINGS, ...save.settings });
-      this.mode = save.mode === "creative" ? "creative" : "survival";
-      this.health = typeof save.health === "number" && isFinite(save.health) ? Math.max(1, Math.min(20, Math.round(save.health))) : 20;
-      const bs = save.bedSpawn;
-      this.bedSpawn = bs && [bs.x, bs.y, bs.z].every((v) => typeof v === "number" && isFinite(v)) ? { x: bs.x, y: bs.y, z: bs.z } : null;
-      // inventário: aceita apenas itens válidos; ferramentas ganham durabilidade
-      this.inventory = save.inventory.slice(0, 36).map((it) => {
-        if (!it || typeof it.id !== "string" || !ITEMS[it.id]) return null;
-        const def = ITEMS[it.id];
-        const max = def.maxStack;
-        const count = Math.max(1, Math.min(max, Math.floor(it.count) || 1));
-        const stack: ItemStack = { id: it.id, count };
-        if (def.tool) stack.dur = typeof it.dur === "number" && it.dur > 0 ? Math.min(def.tool.maxDur, Math.floor(it.dur)) : def.tool.maxDur;
-        return stack;
-      });
-      while (this.inventory.length < 36) this.inventory.push(null);
-      const pp = save.player;
-      if (pp && [pp.x, pp.y, pp.z, pp.yaw, pp.pitch].every((v) => typeof v === "number" && isFinite(v))) {
-        this.player.pos.set(pp.x, pp.y, pp.z);
-        this.player.yaw = pp.yaw;
-        this.player.pitch = pp.pitch;
-      } else {
-        this.hasSavedPos = false;
-      }
-      if (typeof save.timeOfDay === "number" && isFinite(save.timeOfDay)) this.skyTime0 = save.timeOfDay;
-    }
+    if (save) this.applySave(save);
 
     this.sky = new Sky(this.scene);
     if (this.skyTime0 !== null) this.sky.time = this.skyTime0;
@@ -258,6 +237,40 @@ export class Game implements UIHost {
     return Math.max(2, Math.min(10, Math.round(this.settings.renderDist * mult)));
   }
 
+  /** Restaura todo o estado do jogo a partir de um save (com validação). */
+  private applySave(save: SaveData): void {
+    this.world.loadDeltas(save.deltas ?? {});
+    this.settings = this.sanitizeSettings({ ...DEFAULT_SETTINGS, ...save.settings });
+    this.mode = save.mode === "creative" ? "creative" : "survival";
+    this.health = typeof save.health === "number" && isFinite(save.health) ? Math.max(1, Math.min(20, Math.round(save.health))) : 20;
+    const bs = save.bedSpawn;
+    this.bedSpawn = bs && [bs.x, bs.y, bs.z].every((v) => typeof v === "number" && isFinite(v)) ? { x: bs.x, y: bs.y, z: bs.z } : null;
+    // inventário: aceita apenas itens válidos; ferramentas ganham durabilidade
+    this.inventory = save.inventory.slice(0, 36).map((it) => {
+      if (!it || typeof it.id !== "string" || !ITEMS[it.id]) return null;
+      const def = ITEMS[it.id];
+      const max = def.maxStack;
+      const count = Math.max(1, Math.min(max, Math.floor(it.count) || 1));
+      const stack: ItemStack = { id: it.id, count };
+      if (def.tool) stack.dur = typeof it.dur === "number" && it.dur > 0 ? Math.min(def.tool.maxDur, Math.floor(it.dur)) : def.tool.maxDur;
+      return stack;
+    });
+    while (this.inventory.length < 36) this.inventory.push(null);
+    const pp = save.player;
+    this.hasSavedPos = true;
+    if (pp && [pp.x, pp.y, pp.z, pp.yaw, pp.pitch].every((v) => typeof v === "number" && isFinite(v))) {
+      this.player.pos.set(pp.x, pp.y, pp.z);
+      this.player.yaw = pp.yaw;
+      this.player.pitch = pp.pitch;
+    } else {
+      this.hasSavedPos = false;
+    }
+    if (typeof save.timeOfDay === "number" && isFinite(save.timeOfDay)) {
+      if (this.sky) this.sky.time = save.timeOfDay;
+      else this.skyTime0 = save.timeOfDay;
+    }
+  }
+
   startContinue(): void {
     this.audio.unlock();
     if (SaveManager.hasSave() && this.started) {
@@ -286,7 +299,7 @@ export class Game implements UIHost {
   }
 
   private doNewWorld(): void {
-    SaveManager.clear();
+    this.worldName = SaveManager.nextWorldName();
     this.mobs.dispose();
     this.drops.dispose();
     this.world.dispose();
@@ -315,6 +328,7 @@ export class Game implements UIHost {
       this.player.pos.set(this.spawn.x, topY + 0.05, this.spawn.z);
       this.player.yaw = 0; this.player.pitch = 0;
       this.sky.time = DAY_LENGTH * 0.08;
+      this.saveWorld(false); // registra o mundo novo na lista de saves
       this.ui.hideLoading();
       this.ui.toast(this.mode === "creative" ? "Mundo criativo criado — F para voar" : "Mundo de sobrevivência criado");
       this.enterPlay();
@@ -330,6 +344,7 @@ export class Game implements UIHost {
 
   saveWorld(manual: boolean): void {
     if (!this.world) return;
+    if (!this.worldName) this.worldName = SaveManager.nextWorldName();
     const data: SaveData = {
       version: 1,
       seed: this.world.seed,
@@ -345,8 +360,49 @@ export class Game implements UIHost {
       health: this.health,
       bedSpawn: this.bedSpawn,
     };
-    const ok = SaveManager.save(data);
-    if (manual) this.ui.toast(ok ? "Mundo salvo" : "Erro ao salvar (veja o console)");
+    const ok = SaveManager.saveWorld(this.worldName, data);
+    if (manual) this.ui.toast(ok ? `Mundo "${this.worldName}" salvo` : "Erro ao salvar (veja o console)");
+  }
+
+  /** Lista de mundos salvos (para a aba "Meus Mundos" do menu). */
+  listWorlds() { return SaveManager.listWorlds(); }
+
+  /** Exclui um mundo salvo. */
+  deleteWorld(name: string): void {
+    SaveManager.deleteWorld(name);
+    if (this.worldName === name) this.worldName = null;
+  }
+
+  /** Carrega um mundo salvo pelo nome (trocando o mundo ativo). */
+  loadNamedWorld(name: string): void {
+    const data = SaveManager.loadWorld(name);
+    if (!data) { this.ui.toast("Falha ao carregar o mundo"); return; }
+    this.audio.unlock();
+    if (this.started) this.saveWorld(false); // preserva o mundo anterior
+    this.worldName = name;
+    this.mobs.dispose(); this.drops.dispose(); this.world.dispose();
+    this.world = new World(this.scene, this.tex, data.seed);
+    this.world.renderDist = this.effectiveRenderDist();
+    this.mobs = new Mobs(this.scene, this.world);
+    this.drops = new Drops(this.scene, this.world, this.tex);
+    this.player = new Player();
+    this.bindPlayerHooks();
+    this.craftGrid = new Array(4).fill(null);
+    this.craftGrid3 = new Array(9).fill(null);
+    this.applySave(data);
+    this.started = true;
+    this.ui.setLoading(0.05, "Carregando mundo…");
+    const sx = Math.floor(this.player.pos.x), sz = Math.floor(this.player.pos.z);
+    void this.world.initialLoad(Math.max(3, this.effectiveRenderDist()), sx, sz, (p) =>
+      this.ui.setLoading(0.05 + p * 0.9, "Carregando mundo…"),
+    ).then(() => {
+      if (this.disposed) return;
+      this.spawn.set(sx + 0.5, this.world.surfaceHeight(sx, sz), sz + 0.5);
+      this.ui.hideLoading();
+      this.ui.hideScreens();
+      this.enterPlay();
+      this.ui.toast(`Mundo "${name}" carregado`);
+    });
   }
 
   resume(): void {
@@ -378,16 +434,23 @@ export class Game implements UIHost {
 
   tryCraft(r: Recipe, area: "craft" | "craft3"): boolean {
     const grid = area === "craft" ? this.craftGrid : this.craftGrid3;
-    const need = { ...r.inputs };
-    for (let i = 0; i < grid.length; i++) {
-      const s = grid[i];
-      if (!s) continue;
-      const take = Math.min(s.count, need[s.id] ?? 0);
-      s.count -= take;
-      need[s.id] = (need[s.id] ?? 0) - take;
-      if (s.count <= 0) grid[i] = null;
+    const width = area === "craft" ? 2 : 3;
+    const b = gridBounds(grid, width);
+    if (!b) return false;
+    const pb = patternBounds(r);
+    const gw = b.maxX - b.minX + 1, gh = b.maxY - b.minY + 1;
+    // consome exatamente 1 item de cada célula ocupada pelo padrão
+    for (let y = 0; y < gh; y++) {
+      for (let x = 0; x < gw; x++) {
+        const idx = (b.minY + y) * width + (b.minX + x);
+        const cell = grid[idx];
+        const ch = r.pattern[pb.minY + y][pb.minX + x];
+        if (ch !== " " && cell) {
+          cell.count -= 1;
+          if (cell.count <= 0) grid[idx] = null;
+        }
+      }
     }
-    for (const k of Object.keys(need)) if (need[k] > 0) return false;
     this.giveItem(r.output.id, r.output.count);
     this.audio.craft();
     return true;
@@ -908,16 +971,13 @@ export class Game implements UIHost {
 
     this.sky.update(dt, this.camera.position, this.state === "playing" && this.player.eyesInWater, this.world.renderDist * CHUNK + 10);
 
-    const wt = time * 0.001;
-    this.tex.waterTexture.offset.set(wt * 0.015 % 1, wt * 0.009 % 1);
-    this.world.waterMaterial.opacity = 0.7 + Math.sin(wt * 1.4) * 0.04;
-
     if (this.state === "playing") {
       this.updatePlaying(dt);
     } else if (this.state === "menu") {
       this.orbitAngle += dt * 0.06;
       const r = 34;
       const c = this.spawn;
+      const wt = time * 0.001;
       this.camera.position.set(c.x + Math.cos(this.orbitAngle) * r, c.y + 14 + Math.sin(wt * 0.2) * 2, c.z + Math.sin(this.orbitAngle) * r);
       this.camera.lookAt(c.x, c.y + 2, c.z);
       this.highlight.visible = false;
