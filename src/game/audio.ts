@@ -100,4 +100,24 @@ export class AudioManager {
   pickup(): void { this.tone(880, 0.07, "square", 0.07, 1180); }
 
   denied(): void { this.tone(180, 0.12, "sawtooth", 0.08, 120); }
+
+  hurt(): void {
+    this.tone(220, 0.18, "sawtooth", 0.14, 90);
+    this.noise(0.1, 500, 0.8, 0.1);
+  }
+
+  mobHit(): void {
+    this.noise(0.08, 900, 0.9, 0.2, "bandpass");
+    this.tone(160, 0.08, "triangle", 0.14, 100);
+  }
+
+  mobDie(): void {
+    this.tone(300, 0.25, "sawtooth", 0.1, 60);
+    this.noise(0.2, 700, 0.7, 0.14);
+  }
+
+  toolBreak(): void {
+    this.noise(0.15, 2400, 0.8, 0.22, "highpass");
+    this.tone(140, 0.2, "square", 0.1, 50);
+  }
 }

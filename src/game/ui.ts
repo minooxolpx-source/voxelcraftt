@@ -1,27 +1,33 @@
 /**
- * UI — toda a interface em DOM (menus, HUD, hotbar, inventário com
- * arrastar-e-soltar, crafting 2x2, configurações, toasts e loading).
+ * UI — toda a interface em DOM: menus, seleção de modo, HUD (corações, hotbar
+ * com durabilidade), inventário com arrastar-e-soltar, crafting 2×2 e bancada
+ * 3×3, catálogo criativo, configurações, toasts e loading.
  */
-import { RECIPES, itemDef, matchRecipe } from "./blocks";
+import { RECIPES, ITEMS, itemDef, matchRecipe } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
-import type { Settings } from "./save";
+import type { Settings, GameMode } from "./save";
 import type { TexturePack } from "./textures";
 
 export interface UIHost {
   settings: Settings;
   seed: number;
+  mode: GameMode;
   selectedSlot: number;
+  health: number;
   inventory: (ItemStack | null)[];
   craftGrid: (ItemStack | null)[];
+  craftGrid3: (ItemStack | null)[];
   applySettings(p: Partial<Settings>): void;
   startContinue(): void;
   newWorld(): void;
+  chooseMode(mode: GameMode, action: "play" | "new"): void;
   saveWorld(manual: boolean): void;
   resume(): void;
   toMenu(): void;
   selectSlot(i: number): void;
   invChanged(): void;
-  tryCraft(r: Recipe): boolean;
+  tryCraft(r: Recipe, area: "craft" | "craft3"): boolean;
+  creativeTake(itemId: string): void;
 }
 
 const el = (tag: string, cls = "", html = ""): HTMLElement => {
@@ -39,11 +45,18 @@ function copyIcon(src: HTMLCanvasElement, size: number): HTMLCanvasElement {
   return c;
 }
 
+/** coração pixelado em SVG (7×6) */
+const HEART_PATH = "M1 0h2v1H1zM4 0h2v1H4zM0 1h7v2H0zM1 3h5v1H1zM2 4h3v1H2zM3 5h1v1H3z";
+const heartSVG = (color: string): string =>
+  `<svg viewBox="0 0 7 6" width="18" height="16" shape-rendering="crispEdges"><path d="${HEART_PATH}" fill="${color}" stroke="none"/></svg>`;
+
 const CONTROLS: [string, string][] = [
-  ["W A S D", "mover"], ["Mouse", "olhar"], ["Espaço", "pular / nadar"],
-  ["Shift", "correr"], ["Botão esq.", "quebrar bloco"], ["Botão dir.", "colocar bloco"],
-  ["1–9 / roda", "hotbar"], ["E", "inventário"], ["ESC", "pausa"],
+  ["W A S D", "mover"], ["Mouse", "olhar"], ["Espaço", "pular / subir"],
+  ["Shift", "correr / descer"], ["Botão esq.", "quebrar / atacar"], ["Botão dir.", "colocar / usar"],
+  ["1–9 / roda", "hotbar"], ["E", "inventário"], ["F", "voar (criativo)"], ["ESC", "pausa"],
 ];
+
+type Area = "main" | "craft" | "craft3";
 
 export class UI {
   private root: HTMLElement;
@@ -52,27 +65,38 @@ export class UI {
 
   private hotbarEl!: HTMLElement;
   private hotSlots: HTMLElement[] = [];
+  private heartsEl!: HTMLElement;
+  private heartSpans: HTMLElement[] = [];
   private statsEl!: HTMLElement;
   private mineBar!: HTMLElement;
   private crosshair!: HTMLElement;
   private toastBox!: HTMLElement;
   private waterFx!: HTMLElement;
+  private damageFx!: HTMLElement;
   private hudEl!: HTMLElement;
 
   private mainMenu!: HTMLElement;
   private pauseMenu!: HTMLElement;
+  private modeScreen!: HTMLElement;
   private settingsPanel!: HTMLElement;
   private invScreen!: HTMLElement;
+  private invPanelSurvival!: HTMLElement;
+  private invPanelCreative!: HTMLElement;
+  private wbScreen!: HTMLElement;
   private loadingEl!: HTMLElement;
   private loadBar!: HTMLElement;
   private loadLabel!: HTMLElement;
 
-  private invSlots = new Map<HTMLElement, { area: "main" | "craft"; index: number }>();
+  private invSlots = new Map<HTMLElement, { area: Area; index: number }>();
   private resultSlot!: HTMLElement;
+  private resultSlot3!: HTMLElement;
   private settingsCtx: "menu" | "pause" = "menu";
-  private held: { item: ItemStack; area: "main" | "craft"; index: number } | null = null;
+  private held: { item: ItemStack; area: Area; index: number } | null = null;
+  private didDrop = false;
   private ghost!: HTMLElement;
   private currentRecipe: Recipe | null = null;
+  private currentRecipe3: Recipe | null = null;
+  private modeAction: "play" | "new" = "play";
 
   constructor(container: HTMLElement, host: UIHost, tex: TexturePack) {
     this.root = el("div", "vw-root");
@@ -81,7 +105,9 @@ export class UI {
     this.tex = tex;
     this.buildHUD();
     this.buildMenus();
+    this.buildModeSelect();
     this.buildInventory();
+    this.buildWorkbench();
     this.buildSettings();
     this.buildLoading();
     this.ghost = el("div", "drag-ghost");
@@ -91,8 +117,6 @@ export class UI {
     window.addEventListener("mousemove", this.onDragMove);
     window.addEventListener("mouseup", this.onDragEnd);
   }
-
-  get canvasHost(): HTMLElement { return this.root; }
 
   /* ---------------- HUD ---------------- */
 
@@ -105,6 +129,16 @@ export class UI {
     this.statsEl = el("div", "stats");
     this.toastBox = el("div", "toasts");
     this.waterFx = el("div", "water-fx");
+    this.damageFx = el("div", "damage-fx");
+
+    // corações (10 → 20 HP)
+    this.heartsEl = el("div", "hearts");
+    for (let i = 0; i < 10; i++) {
+      const h = el("span", "heart");
+      h.innerHTML = heartSVG("#3d0f0c") + `<span class="heart-fill">${heartSVG("#e0342b")}</span>`;
+      this.heartSpans.push(h);
+      this.heartsEl.appendChild(h);
+    }
 
     this.hotbarEl = el("div", "hotbar");
     for (let i = 0; i < 9; i++) {
@@ -114,17 +148,37 @@ export class UI {
       this.hotSlots.push(s);
       this.hotbarEl.appendChild(s);
     }
+    const hbWrap = el("div", "hb-wrap");
+    hbWrap.append(this.heartsEl, this.hotbarEl);
 
     const hint = el("div", "hint");
     hint.innerHTML = CONTROLS.map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join("");
 
-    this.hudEl.append(this.crosshair, this.mineBar, this.statsEl, this.hotbarEl, hint);
-    this.root.append(this.hudEl, this.toastBox, this.waterFx);
+    this.hudEl.append(this.crosshair, this.mineBar, this.statsEl, hbWrap, hint);
+    this.root.append(this.hudEl, this.toastBox, this.waterFx, this.damageFx);
   }
 
   setHUDVisible(v: boolean): void {
     this.hudEl.style.display = v ? "block" : "none";
     this.crosshair.style.display = v ? "flex" : "none";
+  }
+
+  setHearts(hp: number, visible: boolean): void {
+    this.heartsEl.style.display = visible ? "flex" : "none";
+    for (let i = 0; i < 10; i++) {
+      const fill = this.heartSpans[i].querySelector(".heart-fill") as HTMLElement;
+      const v = hp - i * 2; // 2, 1 ou 0
+      fill.style.clipPath = v >= 2 ? "none" : v === 1 ? "inset(0 50% 0 0)" : "inset(0 100% 0 0)";
+    }
+  }
+
+  flashDamage(): void {
+    this.damageFx.style.transition = "none";
+    this.damageFx.style.opacity = "1";
+    requestAnimationFrame(() => {
+      this.damageFx.style.transition = "opacity 0.5s";
+      this.damageFx.style.opacity = "0";
+    });
   }
 
   updateHotbar(): void {
@@ -135,11 +189,14 @@ export class UI {
       const item = inv[i];
       const old = s.querySelector("canvas");
       if (old) old.remove();
+      const oldBar = s.querySelector(".dur-bar");
+      if (oldBar) oldBar.remove();
       const countEl = s.querySelector(".slot-count")!;
       if (item) {
         s.appendChild(copyIcon(this.tex.icon(item.id), 34));
         s.title = itemDef(item.id).name;
         countEl.textContent = item.count > 1 ? String(item.count) : "";
+        this.drawDurability(s, item);
       } else {
         s.title = "";
         countEl.textContent = "";
@@ -147,12 +204,25 @@ export class UI {
     }
   }
 
-  updateStats(fps: number, x: number, y: number, z: number, chunks: number, dayStr: string): void {
+  /** barrinha de durabilidade dentro do slot (ferramentas) */
+  private drawDurability(slotEl: HTMLElement, item: ItemStack): void {
+    const def = itemDef(item.id);
+    if (!def?.tool || item.dur === undefined) return;
+    const pct = Math.max(0, Math.min(1, item.dur / def.tool.maxDur));
+    const bar = el("div", "dur-bar");
+    const fill = el("div", "dur-fill");
+    fill.style.width = `${Math.round(pct * 100)}%`;
+    fill.style.background = pct > 0.5 ? "#79c94e" : pct > 0.25 ? "#f2b23e" : "#e0563f";
+    bar.appendChild(fill);
+    slotEl.appendChild(bar);
+  }
+
+  updateStats(fps: number, x: number, y: number, z: number, chunks: number, dayStr: string, modeStr: string): void {
     this.statsEl.innerHTML =
       `<span class="st-fps">${fps} FPS</span>` +
       `<span>XYZ ${x} / ${y} / ${z}</span>` +
       `<span>${dayStr}</span>` +
-      `<span>${chunks} chunks</span>`;
+      `<span>${chunks} chunks · ${modeStr}</span>`;
   }
 
   setMineProgress(p: number): void {
@@ -174,21 +244,20 @@ export class UI {
   /* ---------------- Menus ---------------- */
 
   private buildMenus(): void {
-    // --- menu principal ---
     this.mainMenu = el("div", "screen menu-screen");
     const left = el("div", "menu-left");
     left.innerHTML = `
       <div class="title-block">
         <div class="vw-kicker">sandbox voxel no navegador</div>
         <h1 class="vw-title"><span class="t-voxel">VOXEL</span><span class="t-world">WORLD</span></h1>
-        <p class="vw-sub">Minere, construa e explore um mundo infinito de blocos gerado na hora — com cavernas, minérios, árvores e ciclo de dia e noite.</p>
+        <p class="vw-sub">Minere, construa e explore um mundo infinito de blocos gerado na hora — com cavernas, minérios, árvores, criaturas e ciclo de dia e noite.</p>
       </div>
       <div class="menu-buttons">
         <button class="btn btn-primary" data-act="play"></button>
         <button class="btn" data-act="new">Novo Mundo</button>
         <button class="btn" data-act="settings">Configurações</button>
       </div>
-      <div class="menu-footer">versão 1.0 · seed <span class="seed-val"></span> · three.js</div>`;
+      <div class="menu-footer">versão 2.0 · seed <span class="seed-val"></span> · three.js</div>`;
     const right = el("div", "menu-right");
     right.innerHTML = `<div class="panel controls-panel"><h3>Controles</h3>` +
       CONTROLS.map(([k, v]) => `<div class="ctl"><kbd>${k}</kbd><span>${v}</span></div>`).join("") + `</div>`;
@@ -199,7 +268,6 @@ export class UI {
     (this.mainMenu.querySelector(".seed-val") as HTMLElement).textContent = String(this.host.seed);
     this.root.appendChild(this.mainMenu);
 
-    // --- pausa ---
     this.pauseMenu = el("div", "screen pause-screen");
     this.pauseMenu.style.display = "none";
     const card = el("div", "panel pause-panel");
@@ -217,6 +285,43 @@ export class UI {
     this.pauseMenu.querySelector('[data-p="save"]')!.addEventListener("click", () => { this.audioTick(); this.host.saveWorld(true); });
     this.pauseMenu.querySelector('[data-p="menu"]')!.addEventListener("click", () => { this.audioTick(); this.host.toMenu(); });
     this.root.appendChild(this.pauseMenu);
+  }
+
+  private buildModeSelect(): void {
+    this.modeScreen = el("div", "screen mode-screen");
+    this.modeScreen.style.display = "none";
+    const wrap = el("div", "mode-wrap");
+    wrap.innerHTML = `<h2 class="panel-title mode-title">Escolha o modo de jogo</h2>`;
+    const cards = el("div", "mode-cards");
+    const surv = el("button", "mode-card");
+    surv.innerHTML = `
+      <span class="mode-icon">${heartSVG("#e0342b")}</span>
+      <span class="mode-name">Sobrevivência</span>
+      <span class="mode-desc">Corações, dano de queda, ferramentas com durabilidade e criaturas hostis à noite. Minere para coletar cada bloco.</span>`;
+    const crea = el("button", "mode-card crea");
+    crea.innerHTML = `
+      <span class="mode-icon">${this.cubeIcon()}</span>
+      <span class="mode-name">Criativo</span>
+      <span class="mode-desc">Voar com F, blocos infinitos no catálogo, quebra instantânea e sem dano. Construa sem limites.</span>`;
+    surv.addEventListener("click", () => { this.audioTick(); this.host.chooseMode("survival", this.modeAction); });
+    crea.addEventListener("click", () => { this.audioTick(); this.host.chooseMode("creative", this.modeAction); });
+    cards.append(surv, crea);
+    wrap.appendChild(cards);
+    this.modeScreen.appendChild(wrap);
+    this.root.appendChild(this.modeScreen);
+  }
+
+  private cubeIcon(): string {
+    return `<svg viewBox="0 0 16 16" width="18" height="18" shape-rendering="crispEdges">
+      <path d="M8 1L15 4.5V8L8 11.5 1 8V4.5z" fill="#79c94e"/>
+      <path d="M1 8l7 3.5V15L1 11.5z" fill="#4e9631"/>
+      <path d="M15 8l-7 3.5V15l7-3.5z" fill="#2f611d"/></svg>`;
+  }
+
+  showModeSelect(action: "play" | "new"): void {
+    this.modeAction = action;
+    this.hideAllScreens();
+    this.modeScreen.style.display = "flex";
   }
 
   private audioTick(): void {
@@ -246,7 +351,6 @@ export class UI {
     this.loadBar.style.width = `${Math.round(p * 100)}%`;
     this.loadLabel.textContent = label;
   }
-
   hideLoading(): void { this.loadingEl.style.display = "none"; }
 
   private hideAllScreens(): void {
@@ -254,6 +358,8 @@ export class UI {
     this.pauseMenu.style.display = "none";
     this.settingsPanel.style.display = "none";
     this.invScreen.style.display = "none";
+    this.modeScreen.style.display = "none";
+    this.wbScreen.style.display = "none";
   }
 
   /** Fecha todas as telas (usado ao entrar no jogo). */
@@ -291,13 +397,11 @@ export class UI {
     const bind = (id: string, fn: (v: number) => void) => {
       const input = card.querySelector("#set-" + id) as HTMLInputElement;
       const out = card.querySelector("#out-" + id) as HTMLElement;
-      // label() só atualiza o texto; upd() também aplica no jogo
       const label = () => {
         const v = parseFloat(input.value);
         out.textContent = (id === "vol" ? Math.round(v * 100) + "%" : id === "sens" ? v.toFixed(1) : String(v)) + (input.dataset.suffix ?? "");
       };
-      const upd = () => { label(); fn(parseFloat(input.value)); };
-      input.addEventListener("input", upd);
+      input.addEventListener("input", () => { label(); fn(parseFloat(input.value)); });
       return { input, label };
     };
     const s = this.host.settings;
@@ -310,7 +414,6 @@ export class UI {
     b3.input.value = String(s.renderDist);
     b3.input.dataset.suffix = " chunks";
     b4.input.value = String(s.volume);
-    // sincroniza apenas os rótulos — sem disparar applySettings na construção
     b1.label(); b2.label(); b3.label(); b4.label();
     const q = card.querySelector("#set-q") as HTMLSelectElement;
     q.value = String(s.qualidade);
@@ -342,7 +445,7 @@ export class UI {
   private closeSettings(): void {
     this.settingsPanel.style.display = "none";
     if (this.settingsCtx === "menu") this.mainMenu.style.display = "flex";
-    else { this.pauseMenu.style.display = "flex"; }
+    else this.pauseMenu.style.display = "flex";
   }
 
   /* ---------------- Inventário + Crafting ---------------- */
@@ -352,20 +455,14 @@ export class UI {
     this.invScreen.style.display = "none";
     const wrap = el("div", "inv-wrap");
 
-    // crafting
+    // crafting 2×2
     const craftPanel = el("div", "panel inv-panel");
     craftPanel.innerHTML = `<h3 class="inv-title">Fabricação 2×2</h3>`;
     const craftRow = el("div", "craft-row");
     const grid = el("div", "craft-grid");
     for (let i = 0; i < 4; i++) grid.appendChild(this.makeSlot("craft", i));
-    this.resultSlot = el("div", "slot result-slot");
-    this.resultSlot.title = "Clique para fabricar";
-    this.resultSlot.addEventListener("mouseup", () => {
-      if (this.held) return; // dropando algo aqui — o onDragEnd devolve à origem
-      if (this.currentRecipe && this.host.tryCraft(this.currentRecipe)) this.refreshInventory();
-    });
-    const arrow = el("div", "craft-arrow", `<svg width="26" height="16" viewBox="0 0 26 16" fill="none"><path d="M1 8h20M15 2l7 6-7 6" stroke="#9fb3a0" stroke-width="2.4" stroke-linecap="square"/></svg>`);
-    craftRow.append(grid, arrow, this.resultSlot);
+    this.resultSlot = this.makeResult("craft");
+    craftRow.append(grid, this.arrowEl(), this.resultSlot);
     craftPanel.appendChild(craftRow);
 
     // receitas
@@ -377,28 +474,91 @@ export class UI {
       const inputs = Object.entries(r.inputs).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
       const iconWrap = el("span", "rec-icon");
       iconWrap.appendChild(copyIcon(this.tex.icon(r.output.id), 26));
-      row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`));
+      const badge = el("span", "rec-badge" + (r.table ? " rec-badge-3" : ""), r.table ? "3×3" : "2×2");
+      row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`), badge);
       recList.appendChild(row);
     }
 
-    // mochila
-    const invPanel = el("div", "panel inv-panel");
-    invPanel.innerHTML = `<h3 class="inv-title">Mochila</h3>`;
+    // mochila (sobrevivência)
+    this.invPanelSurvival = el("div", "panel inv-panel");
+    this.invPanelSurvival.innerHTML = `<h3 class="inv-title">Mochila</h3>`;
     const gridMain = el("div", "inv-grid");
     for (let i = 9; i < 36; i++) gridMain.appendChild(this.makeSlot("main", i));
-    invPanel.appendChild(gridMain);
+    this.invPanelSurvival.appendChild(gridMain);
+    this.invPanelSurvival.appendChild(el("h3", "inv-title sub", "Hotbar"));
     const hb = el("div", "inv-grid inv-hotbar");
     for (let i = 0; i < 9; i++) hb.appendChild(this.makeSlot("main", i));
-    invPanel.appendChild(el("h3", "inv-title sub", "Hotbar"));
-    invPanel.appendChild(hb);
+    this.invPanelSurvival.appendChild(hb);
 
-    wrap.append(craftPanel, recPanel, invPanel);
-    const esc = el("div", "inv-esc", "E ou ESC para fechar · arraste com o mouse · clique direito divide/coloca 1 · duplo clique move entre hotbar e mochila");
+    // catálogo (criativo)
+    this.invPanelCreative = el("div", "panel inv-panel");
+    this.invPanelCreative.innerHTML = `<h3 class="inv-title">Catálogo criativo — clique para encher o slot ${"selecionado"}</h3>`;
+    const cat = el("div", "inv-grid cat-grid");
+    const ids = Object.keys(ITEMS).sort((a, b) => {
+      const ka = ITEMS[a].kind === "block" ? 0 : ITEMS[a].kind === "tool" ? 2 : 1;
+      const kb = ITEMS[b].kind === "block" ? 0 : ITEMS[b].kind === "tool" ? 2 : 1;
+      return ka - kb || a.localeCompare(b);
+    });
+    for (const id of ids) {
+      const s = el("div", "slot cat-slot");
+      s.title = ITEMS[id].name;
+      s.appendChild(copyIcon(this.tex.icon(id), 34));
+      s.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        if (this.held) return;
+        this.audioTick();
+        this.host.creativeTake(id);
+      });
+      cat.appendChild(s);
+    }
+    this.invPanelCreative.appendChild(cat);
+    this.invPanelCreative.appendChild(el("h3", "inv-title sub", "Hotbar"));
+    const hb2 = el("div", "inv-grid inv-hotbar");
+    for (let i = 0; i < 9; i++) hb2.appendChild(this.makeSlot("main", i));
+    this.invPanelCreative.appendChild(hb2);
+
+    wrap.append(craftPanel, recPanel, this.invPanelSurvival, this.invPanelCreative);
+    const esc = el("div", "inv-esc", "E ou ESC fecha · clique pega/solta a pilha · clique direito pega metade ou solta 1 · duplo clique junta pilhas");
     this.invScreen.append(wrap, esc);
     this.root.appendChild(this.invScreen);
   }
 
-  private makeSlot(area: "main" | "craft", index: number): HTMLElement {
+  private arrowEl(): HTMLElement {
+    return el("div", "craft-arrow", `<svg width="26" height="16" viewBox="0 0 26 16" fill="none"><path d="M1 8h20M15 2l7 6-7 6" stroke="#9fb3a0" stroke-width="2.4" stroke-linecap="square"/></svg>`);
+  }
+
+  private makeResult(area: "craft" | "craft3"): HTMLElement {
+    const r = el("div", "slot result-slot");
+    r.title = "Clique para fabricar";
+    r.addEventListener("mouseup", () => {
+      if (this.held) return;
+      const rec = area === "craft" ? this.currentRecipe : this.currentRecipe3;
+      if (rec && this.host.tryCraft(rec, area)) this.refreshInventory();
+    });
+    return r;
+  }
+
+  private buildWorkbench(): void {
+    this.wbScreen = el("div", "screen inv-screen");
+    this.wbScreen.style.display = "none";
+    const wrap = el("div", "inv-wrap");
+    const panel = el("div", "panel inv-panel");
+    panel.innerHTML = `<h3 class="inv-title">Bancada — Fabricação 3×3</h3>`;
+    const row = el("div", "craft-row");
+    const grid = el("div", "craft-grid craft-grid-3");
+    for (let i = 0; i < 9; i++) grid.appendChild(this.makeSlot("craft3", i));
+    this.resultSlot3 = this.makeResult("craft3");
+    row.append(grid, this.arrowEl(), this.resultSlot3);
+    panel.appendChild(row);
+    panel.appendChild(el("div", "inv-esc", "Ferramentas de pedra, ferro e diamante, espadas e a cama só saem aqui."));
+    const close = el("button", "btn btn-primary set-close", "Fechar bancada");
+    close.addEventListener("click", () => { this.audioTick(); this.host.invChanged(); this.hideAllScreens(); this.host.resume(); });
+    wrap.append(panel, close);
+    this.wbScreen.appendChild(wrap);
+    this.root.appendChild(this.wbScreen);
+  }
+
+  private makeSlot(area: Area, index: number): HTMLElement {
     const s = el("div", "slot");
     s.innerHTML = `<span class="slot-count"></span>`;
     this.invSlots.set(s, { area, index });
@@ -412,17 +572,34 @@ export class UI {
     this.invScreen.style.display = show ? "flex" : "none";
     if (show) {
       this.held = null;
+      this.ghost.style.display = "none";
+      const creative = this.host.mode === "creative";
+      this.invPanelSurvival.style.display = creative ? "none" : "block";
+      this.invPanelCreative.style.display = creative ? "block" : "none";
       this.refreshInventory();
     }
   }
 
-  private getSlotStack(area: "main" | "craft", i: number): ItemStack | null {
-    return area === "main" ? this.host.inventory[i] : this.host.craftGrid[i];
+  showWorkbench(show: boolean): void {
+    if (show) this.hideAllScreens();
+    this.wbScreen.style.display = show ? "flex" : "none";
+    if (show) {
+      this.held = null;
+      this.ghost.style.display = "none";
+      this.refreshInventory();
+    }
   }
 
-  private setSlotStack(area: "main" | "craft", i: number, v: ItemStack | null): void {
+  private getSlotStack(area: Area, i: number): ItemStack | null {
+    if (area === "main") return this.host.inventory[i];
+    if (area === "craft") return this.host.craftGrid[i];
+    return this.host.craftGrid3[i];
+  }
+
+  private setSlotStack(area: Area, i: number, v: ItemStack | null): void {
     if (area === "main") this.host.inventory[i] = v;
-    else this.host.craftGrid[i] = v;
+    else if (area === "craft") this.host.craftGrid[i] = v;
+    else this.host.craftGrid3[i] = v;
   }
 
   refreshInventory(): void {
@@ -430,62 +607,73 @@ export class UI {
       const item = this.getSlotStack(ref.area, ref.index);
       const old = s.querySelector("canvas");
       if (old) old.remove();
+      const oldBar = s.querySelector(".dur-bar");
+      if (oldBar) oldBar.remove();
       const countEl = s.querySelector(".slot-count")!;
       if (item) {
         s.appendChild(copyIcon(this.tex.icon(item.id), 34));
         s.title = itemDef(item.id).name;
         countEl.textContent = item.count > 1 ? String(item.count) : "";
+        this.drawDurability(s, item);
       } else {
         s.title = "";
         countEl.textContent = "";
       }
     }
-    this.refreshResult();
+    this.refreshResult(this.resultSlot, this.host.craftGrid, false);
+    this.refreshResult(this.resultSlot3, this.host.craftGrid3, true);
+    this.currentRecipe = matchRecipe(this.host.craftGrid, false);
+    this.currentRecipe3 = matchRecipe(this.host.craftGrid3, true);
   }
 
-  private refreshResult(): void {
-    this.currentRecipe = matchRecipe(this.host.craftGrid);
-    const old = this.resultSlot.querySelector("canvas");
+  private refreshResult(slot: HTMLElement, grid: (ItemStack | null)[], table: boolean): void {
+    const rec = matchRecipe(grid, table);
+    const old = slot.querySelector("canvas");
     if (old) old.remove();
-    const cnt = this.resultSlot.querySelector(".slot-count") as HTMLElement | null;
-    cnt?.remove();
-    this.resultSlot.classList.toggle("has-recipe", !!this.currentRecipe);
-    if (this.currentRecipe) {
-      const out = this.currentRecipe.output;
-      this.resultSlot.appendChild(copyIcon(this.tex.icon(out.id), 38));
-      const c = el("span", "slot-count", String(out.count));
-      this.resultSlot.appendChild(c);
-      this.resultSlot.title = `Fabricar: ${out.count}× ${itemDef(out.id).name}`;
+    slot.querySelector(".slot-count")?.remove();
+    slot.classList.toggle("has-recipe", !!rec);
+    if (rec) {
+      const out = rec.output;
+      slot.appendChild(copyIcon(this.tex.icon(out.id), 38));
+      slot.appendChild(el("span", "slot-count", String(out.count)));
+      slot.title = `Fabricar: ${out.count}× ${itemDef(out.id).name}`;
     } else {
-      this.resultSlot.title = "Sem receita";
+      slot.title = "Sem receita";
     }
   }
 
-  /* --- drag & drop --- */
+  /* --- drag & drop (modelo clique-pegar / clique-soltar) --- */
 
-  private onSlotDown(e: MouseEvent, area: "main" | "craft", index: number): void {
+  private onSlotDown(e: MouseEvent, area: Area, index: number): void {
     e.preventDefault();
+    e.stopPropagation();
     if (e.button !== 0 && e.button !== 2) return;
-    if (this.held) return; // soltar (mouseup) é que faz o drop — modelo "arrastar e soltar"
+
+    if (this.held) {
+      // já segurando algo → soltar neste slot (esq: pilha, dir: 1 unidade)
+      this.dropOn(area, index, e.button === 2);
+      this.didDrop = true;
+      return;
+    }
     const stack = this.getSlotStack(area, index);
     if (!stack) return;
     if (e.button === 0) {
       this.held = { item: { ...stack }, area, index };
       this.setSlotStack(area, index, null);
     } else {
-      // botão direito pega metade da pilha
       const half = Math.ceil(stack.count / 2);
-      this.held = { item: { id: stack.id, count: half }, area, index };
+      this.held = { item: { id: stack.id, count: half, dur: stack.dur }, area, index };
       const rest = stack.count - half;
-      this.setSlotStack(area, index, rest > 0 ? { id: stack.id, count: rest } : null);
+      this.setSlotStack(area, index, rest > 0 ? { ...stack, count: rest } : null);
     }
+    this.didDrop = false;
     this.showGhost();
     this.ghost.style.left = e.clientX + 12 + "px";
     this.ghost.style.top = e.clientY + 12 + "px";
     this.afterMutate();
   }
 
-  private dropOn(area: "main" | "craft", index: number, single: boolean): void {
+  private dropOn(area: Area, index: number, single: boolean): void {
     if (!this.held) return;
     const target = this.getSlotStack(area, index);
     const held = this.held.item;
@@ -493,7 +681,7 @@ export class UI {
 
     if (single) {
       if (!target) {
-        this.setSlotStack(area, index, { id: held.id, count: 1 });
+        this.setSlotStack(area, index, { id: held.id, count: 1, dur: held.dur });
         held.count -= 1;
       } else if (target.id === held.id && target.count < max) {
         target.count += 1;
@@ -505,13 +693,11 @@ export class UI {
         this.setSlotStack(area, index, { ...held });
         this.held = null;
       } else if (target.id === held.id) {
-        const room = max - target.count;
-        const move = Math.min(room, held.count);
+        const move = Math.min(max - target.count, held.count);
         target.count += move;
         held.count -= move;
         if (held.count <= 0) this.held = null;
       } else {
-        // troca
         this.setSlotStack(area, index, { ...held });
         this.held = { item: { ...target }, area, index };
       }
@@ -520,12 +706,12 @@ export class UI {
     this.afterMutate();
   }
 
-  private onSlotDbl(area: "main" | "craft", index: number): void {
-    if (this.held || area === "craft") return;
+  private onSlotDbl(area: Area, index: number): void {
+    if (this.held || area !== "main") return;
     const stack = this.getSlotStack(area, index);
     if (!stack) return;
     const inHotbar = index < 9;
-    const range = inHotbar ? [9, 36] : [0, 9];
+    const range: [number, number] = inHotbar ? [9, 36] : [0, 9];
     const max = itemDef(stack.id).maxStack;
     for (let i = range[0]; i < range[1]; i++) {
       const t = this.host.inventory[i];
@@ -554,25 +740,20 @@ export class UI {
     this.ghost.style.top = e.clientY + 12 + "px";
   };
 
-  private onDragEnd = (e: MouseEvent): void => {
+  private onDragEnd = (): void => {
     if (!this.held) return;
-    // caiu em cima de um slot? → drop
-    const slotEl = (e.target as HTMLElement | null)?.closest?.(".slot") as HTMLElement | null;
-    const ref = slotEl ? this.invSlots.get(slotEl) : undefined;
-    if (ref) this.dropOn(ref.area, ref.index, e.button === 2);
-    // sobras voltam para a origem (ou o stack inteiro, se não houve drop)
-    if (this.held) {
-      const back = this.getSlotStack(this.held.area, this.held.index);
-      if (!back) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
-      else if (back.id === this.held.item.id) {
-        const max = itemDef(back.id).maxStack;
-        const move = Math.min(max - back.count, this.held.item.count);
-        back.count += move;
-        this.held.item.count -= move;
-        if (this.held.item.count > 0) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
-      }
-      this.held = null;
+    // sobras voltam para a origem (se não houve drop, a pilha inteira)
+    const back = this.getSlotStack(this.held.area, this.held.index);
+    if (!back) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
+    else if (back.id === this.held.item.id) {
+      const max = itemDef(back.id).maxStack;
+      const move = Math.min(max - back.count, this.held.item.count);
+      back.count += move;
+      this.held.item.count -= move;
+      if (this.held.item.count > 0) this.setSlotStack(this.held.area, this.held.index, { ...this.held.item });
     }
+    this.held = null;
+    this.didDrop = false;
     this.ghost.style.display = "none";
     this.afterMutate();
   };
@@ -588,9 +769,7 @@ export class UI {
     this.ghost.innerHTML = "";
     this.ghost.appendChild(copyIcon(this.tex.icon(this.held.item.id), 34));
     if (this.held.item.count > 1) {
-      const c = el("span", "slot-count", String(this.held.item.count));
-      this.ghost.style.position = "fixed";
-      this.ghost.appendChild(c);
+      this.ghost.appendChild(el("span", "slot-count", String(this.held.item.count)));
     }
   }
 

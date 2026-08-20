@@ -188,6 +188,7 @@ export class World {
     const r = rng((cx * 73856093) ^ (cz * 19349663) ^ this.seed);
     this.oreBlobs(blocks, x0, z0, r, B.CARVAO, 9, 5, 38, 4);
     this.oreBlobs(blocks, x0, z0, r, B.FERRO, 6, 4, 24, 3);
+    this.oreBlobs(blocks, x0, z0, r, B.DIAMANTE, 3, 2, 12, 3); // raro e profundo
 
     const chunk: Chunk = { cx, cz, blocks, mesh: null, waterMesh: null, needsMesh: true };
     this.chunks.set(key, chunk);

@@ -205,6 +205,175 @@ body {
   background: #2b3a2a;
 }
 
+/* corações */
+.hb-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.hb-wrap .hotbar {
+  position: static;
+  transform: none;
+}
+.hearts {
+  display: flex;
+  gap: 2px;
+  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.6));
+}
+.heart {
+  position: relative;
+  width: 18px;
+  height: 16px;
+  display: inline-block;
+}
+.heart svg {
+  position: absolute;
+  inset: 0;
+}
+.heart .heart-fill {
+  position: absolute;
+  inset: 0;
+}
+
+/* barra de durabilidade nos slots */
+.dur-bar {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 3px;
+  height: 3px;
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid var(--line);
+  pointer-events: none;
+}
+.dur-fill {
+  height: 100%;
+}
+
+/* flash de dano */
+.damage-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 16;
+  opacity: 0;
+  background: radial-gradient(ellipse at center, rgba(224, 60, 40, 0.12) 0%, rgba(180, 20, 10, 0.5) 100%);
+}
+
+/* seleção de modo */
+.mode-screen {
+  background: rgba(6, 10, 7, 0.72);
+}
+.mode-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  z-index: 1;
+  align-items: center;
+}
+.mode-title {
+  margin: 0;
+}
+.mode-cards {
+  display: flex;
+  gap: 16px;
+}
+.mode-card {
+  font-family: "Chakra Petch", sans-serif;
+  width: 250px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  background: rgba(20, 26, 21, 0.95);
+  border: 2px solid var(--line);
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.45), inset 0 0 0 2px rgba(255, 255, 255, 0.04);
+  padding: 22px 20px;
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.12s, box-shadow 0.1s;
+}
+.mode-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--grass);
+  box-shadow: 0 9px 0 rgba(0, 0, 0, 0.45), 0 0 18px rgba(121, 201, 78, 0.35);
+}
+.mode-card.crea:hover {
+  border-color: var(--amber);
+  box-shadow: 0 9px 0 rgba(0, 0, 0, 0.45), 0 0 18px rgba(242, 178, 62, 0.35);
+}
+.mode-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #10150f;
+  border: 2px solid var(--bevel);
+}
+.mode-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.mode-name {
+  font-family: "Press Start 2P", monospace;
+  font-size: 12px;
+  color: var(--grass);
+}
+.mode-card.crea .mode-name {
+  color: var(--amber);
+}
+.mode-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dim);
+}
+
+/* bancada 3×3 */
+.craft-grid-3 {
+  grid-template-columns: repeat(3, 48px);
+}
+
+/* badge de receita 2×2 / 3×3 */
+.rec-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #0c1a08;
+  background: var(--grass);
+  padding: 2px 5px;
+  border: 1px solid var(--line);
+}
+.rec-badge-3 {
+  background: var(--amber);
+  color: #241703;
+}
+
+/* catálogo criativo */
+.cat-grid {
+  grid-template-columns: repeat(12, 48px);
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+.cat-grid::-webkit-scrollbar {
+  width: 8px;
+}
+.cat-grid::-webkit-scrollbar-thumb {
+  background: var(--bevel);
+}
+.cat-slot:hover {
+  background: #2b3a2a;
+  border-color: var(--grass);
+}
+
 /* hint de controles */
 .hint {
   position: absolute;

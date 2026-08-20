@@ -1,23 +1,30 @@
 /**
  * Texturas 100% procedurais em Canvas (16x16 px por tile, estilo pixel art),
- * empacotadas num atlas 4x4. Sem nenhuma imagem externa.
- * Também gera ícones isométricos dos itens para hotbar/inventário.
+ * empacotadas num atlas 4x5. Sem nenhuma imagem externa.
+ * Também gera ícones isométricos dos itens, texturas de ferramentas e
+ * geometrias de mini-cubo (itens dropados / na mão do jogador).
  */
 import * as THREE from "three";
 import { T, ITEMS, blockDef } from "./blocks";
 import { rng } from "./noise";
 
 export const ATLAS_COLS = 4;
-export const ATLAS_ROWS = 4;
+export const ATLAS_ROWS = 5;
 const PX = 16;
 
 export interface TexturePack {
   atlas: HTMLCanvasElement;
   atlasTexture: THREE.CanvasTexture;
   waterTexture: THREE.CanvasTexture;
+  /** material opaco do atlas (compartilhado por chunks, drops e mão) */
+  atlasMaterial: THREE.MeshLambertMaterial;
   /** cor média do bloco (para partículas) */
   blockColor: (blockId: number) => number;
   icon: (itemId: string, size?: number) => HTMLCanvasElement;
+  /** textura (fundo transparente) do item — para exibir na mão */
+  itemTexture: (itemId: string) => THREE.CanvasTexture;
+  /** mini-cubo com as faces cobertas pelo tile do bloco */
+  blockCube: (blockId: number, size: number) => THREE.BufferGeometry;
 }
 
 type Painter = (ctx: CanvasRenderingContext2D, r: () => number) => void;
@@ -37,7 +44,6 @@ const PAINTERS: Record<number, Painter> = {
   [T.GRAMA_TOPO]: (c, r) => speckle(c, r, "#5fae3d", [["#6fc24a", 0.16], ["#4e9631", 0.14], ["#7fd158", 0.05]]),
   [T.GRAMA_LADO]: (c, r) => {
     speckle(c, r, "#8a5c36", [["#9a6b40", 0.14], ["#75492a", 0.12], ["#a5794c", 0.05]]);
-    // franja de grama no topo, com borda irregular
     c.fillStyle = "#5fae3d";
     for (let x = 0; x < PX; x++) {
       const d = 3 + Math.floor(r() * 2.4);
@@ -67,7 +73,6 @@ const PAINTERS: Record<number, Painter> = {
     c.strokeRect(5.5, 5.5, 5, 5);
     c.fillStyle = "#4f3519";
     c.fillRect(7, 7, 2, 2);
-    if (r() < 2) c.fillRect(4, 8, 1, 1);
   },
   [T.FOLHAS]: (c, r) => speckle(c, r, "#3c7a26", [["#2f611d", 0.24], ["#4d9430", 0.18], ["#244d16", 0.1]]),
   [T.AGUA]: (c, r) => {
@@ -118,6 +123,57 @@ const PAINTERS: Record<number, Painter> = {
     c.fillRect(3, 4, 3, 4); c.fillRect(10, 6, 3, 5);
   },
   [T.ROCHA]: (c, r) => speckle(c, r, "#3f3f42", [["#55555a", 0.18], ["#2a2a2d", 0.2], ["#6a6a70", 0.05]]),
+  [T.PARALELE]: (c, r) => {
+    speckle(c, r, "#7f7f7f", [["#8f8f8f", 0.15], ["#6c6c6c", 0.15]]);
+    c.fillStyle = "#5c5c5c";
+    // padrão de pedras encaixadas
+    const lines = [3, 7, 11];
+    for (const y of lines) c.fillRect(0, y, PX, 1);
+    c.fillRect(5, 0, 1, 3); c.fillRect(11, 4, 1, 3); c.fillRect(3, 8, 1, 3); c.fillRect(13, 12, 1, 3); c.fillRect(7, 12, 1, 4);
+    c.fillStyle = "#9a9a9a";
+    c.fillRect(1, 1, 3, 1); c.fillRect(8, 5, 2, 1); c.fillRect(5, 9, 3, 1); c.fillRect(1, 13, 2, 1);
+  },
+  [T.LA]: (c, r) => {
+    speckle(c, r, "#e8e8e2", [["#f4f4ee", 0.2], ["#d5d5cc", 0.16]]);
+    c.fillStyle = "#c9c9bf";
+    for (let i = 0; i < 7; i++) {
+      const x = Math.floor(r() * 13), y = Math.floor(r() * 13);
+      c.fillRect(x, y + 2, 3, 1);
+      c.fillRect(x + 2, y, 1, 2);
+    }
+  },
+  [T.DIAMANTE]: (c, r) => {
+    PAINTERS[T.PEDRA](c, r);
+    for (let i = 0; i < 5; i++) {
+      const x = 1 + Math.floor(r() * 12), y = 1 + Math.floor(r() * 12);
+      c.fillStyle = "#4aedd9";
+      c.fillRect(x, y, 2, 2);
+      c.fillStyle = "#a5fff2";
+      c.fillRect(x, y, 1, 1);
+      c.fillStyle = "#2fbfae";
+      c.fillRect(x + 1, y + 1, 1, 1);
+    }
+  },
+  [T.CAMA_TOPO]: (c, r) => {
+    speckle(c, r, "#e6e2da", [["#d8d3c8", 0.12], ["#f2efe8", 0.1]]);
+    // travesseiro vermelho no topo
+    c.fillStyle = "#c0392b";
+    c.fillRect(1, 1, 14, 4);
+    c.fillStyle = "#e74c3c";
+    c.fillRect(2, 1, 12, 2);
+    c.fillStyle = "#a93226";
+    c.fillRect(1, 4, 14, 1);
+  },
+  [T.CAMA_LADO]: (c, r) => {
+    // colchão branco em cima, madeira embaixo
+    speckle(c, r, "#a97e4b", [["#97703f", 0.1]]);
+    c.fillStyle = "#e6e2da";
+    c.fillRect(0, 0, PX, 5);
+    c.fillStyle = "#c0392b";
+    c.fillRect(0, 4, PX, 2);
+    c.fillStyle = "#d8d3c8";
+    for (let x = 1; x < PX; x += 3) c.fillRect(x, 1, 1, 2);
+  },
 };
 
 export function makeTextures(): TexturePack {
@@ -138,7 +194,6 @@ export function makeTextures(): TexturePack {
     painter(ctx, rng(tile * 7919 + 17));
     ctx.restore();
 
-    // cor média do tile (partículas)
     const data = ctx.getImageData(tx, ty, PX, PX).data;
     let r = 0, g = 0, b = 0;
     for (let i = 0; i < data.length; i += 4) { r += data[i]; g += data[i + 1]; b += data[i + 2]; }
@@ -151,6 +206,8 @@ export function makeTextures(): TexturePack {
   atlasTexture.minFilter = THREE.NearestFilter;
   atlasTexture.generateMipmaps = false;
   atlasTexture.colorSpace = THREE.SRGBColorSpace;
+
+  const atlasMaterial = new THREE.MeshLambertMaterial({ map: atlasTexture });
 
   // textura própria da água (para animar o offset)
   const waterCanvas = document.createElement("canvas");
@@ -167,7 +224,6 @@ export function makeTextures(): TexturePack {
 
   const blockColor = (blockId: number): number => {
     const bd = blockDef(blockId);
-    // prioriza a cor do topo (grama fica verde, tronco fica marrom etc.)
     return avgColors.get(bd.tiles[0]) ?? 0xffffff;
   };
 
@@ -183,43 +239,84 @@ export function makeTextures(): TexturePack {
     const item = ITEMS[itemId];
     if (item?.kind === "tool") drawTool(g, itemId, size);
     else if (item?.block !== undefined) drawIsoCube(g, atlas, item.block, size);
-    else drawMaterial(g, itemId, size); // graveto etc.
+    else drawMaterial(g, itemId, size);
     iconCache.set(key, c);
     return c;
   };
 
-  return { atlas, atlasTexture, waterTexture, blockColor, icon };
+  const texCache = new Map<string, THREE.CanvasTexture>();
+  const itemTexture = (itemId: string): THREE.CanvasTexture => {
+    const hit = texCache.get(itemId);
+    if (hit) return hit;
+    const t = new THREE.CanvasTexture(icon(itemId, 64));
+    t.magFilter = THREE.NearestFilter;
+    t.minFilter = THREE.NearestFilter;
+    t.generateMipmaps = false;
+    t.colorSpace = THREE.SRGBColorSpace;
+    texCache.set(itemId, t);
+    return t;
+  };
+
+  const cubeCache = new Map<string, THREE.BufferGeometry>();
+  const blockCube = (blockId: number, size: number): THREE.BufferGeometry => {
+    const key = blockId + "@" + size;
+    const hit = cubeCache.get(key);
+    if (hit) return hit;
+    const bd = blockDef(blockId);
+    const g = new THREE.BoxGeometry(size, size, size);
+    const uv = g.attributes.uv as THREE.BufferAttribute;
+    // BoxGeometry: 4 vértices por face, ordem +x,-x,+y,-y,+z,-z
+    const faceTiles = [bd.tiles[1], bd.tiles[1], bd.tiles[0], bd.tiles[2], bd.tiles[1], bd.tiles[1]];
+    for (let f = 0; f < 6; f++) {
+      const tile = faceTiles[f];
+      const tx = tile % ATLAS_COLS, ty = Math.floor(tile / ATLAS_COLS);
+      for (let v = 0; v < 4; v++) {
+        const i = f * 4 + v;
+        const u = uv.getX(i), vv = uv.getY(i);
+        uv.setXY(i, (tx + u) / ATLAS_COLS, 1 - (ty + 1 - vv) / ATLAS_ROWS);
+      }
+    }
+    uv.needsUpdate = true;
+    cubeCache.set(key, g);
+    return g;
+  };
+
+  return { atlas, atlasTexture, waterTexture, atlasMaterial, blockColor, icon, itemTexture, blockCube };
 }
 
 /** Cubo isométrico usando os tiles reais do atlas. */
 function drawIsoCube(g: CanvasRenderingContext2D, atlas: HTMLCanvasElement, blockId: number, size: number) {
   const bd = blockDef(blockId);
   const [top, side] = bd.tiles;
-  const k = size / 4; // meia-largura do losango
+  const k = size / 4;
   const cx = size / 2, ty = size * 0.08;
   const tileSrc = (t: number): [number, number, number, number] =>
     [(t % ATLAS_COLS) * PX, Math.floor(t / ATLAS_COLS) * PX, PX, PX];
 
-  // topo
   g.setTransform(k, k / 2, -k, k / 2, cx, ty);
   g.drawImage(atlas, ...tileSrc(top), 0, 0, 1, 1);
-  // face direita
   g.setTransform(-k, k / 2, 0, k, cx + k, ty + k / 2);
   g.drawImage(atlas, ...tileSrc(side), 0, 0, 1, 1);
   g.globalAlpha = 0.22; g.fillStyle = "#000"; g.fillRect(0, 0, 1, 1); g.globalAlpha = 1;
-  // face esquerda
   g.setTransform(k, k / 2, 0, k, cx - k, ty + k / 2);
   g.drawImage(atlas, ...tileSrc(side), 0, 0, 1, 1);
   g.globalAlpha = 0.38; g.fillStyle = "#000"; g.fillRect(0, 0, 1, 1); g.globalAlpha = 1;
   g.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-/** Ferramentas desenhadas vetorialmente em estilo pixel. */
+const TIER_COLORS: Record<string, [string, string]> = {
+  madeira: ["#b98a4e", "#8a6234"],
+  pedra: ["#9aa3ab", "#6d757d"],
+  ferro: ["#e0e0e0", "#a8a8a8"],
+  diamante: ["#4aedd9", "#2fbfae"],
+};
+
+/** Ferramentas desenhadas vetorialmente em estilo pixel (4 tiers + espada). */
 function drawTool(g: CanvasRenderingContext2D, id: string, size: number) {
   const u = size / 16;
-  const isStone = id.includes("pedra");
-  const head = isStone ? "#9aa3ab" : "#b98a4e";
-  const headDark = isStone ? "#6d757d" : "#8a6234";
+  let tier = "madeira";
+  for (const t of Object.keys(TIER_COLORS)) if (id.endsWith(t)) tier = t;
+  const [head, headDark] = TIER_COLORS[tier];
   const handle = "#8a6234";
   g.save();
   g.translate(size / 2, size / 2);
@@ -242,6 +339,16 @@ function drawTool(g: CanvasRenderingContext2D, id: string, size: number) {
     g.fillRect(-3.4 * u, -7 * u, 3.4 * u, 2.6 * u);
     g.fillStyle = headDark;
     g.fillRect(3.4 * u, -7 * u, 1.2 * u, 5.4 * u);
+  } else if (id.startsWith("espada")) {
+    g.fillStyle = head;
+    g.fillRect(-1.2 * u, -8 * u, 2.4 * u, 10 * u);
+    g.fillStyle = headDark;
+    g.fillRect(0.6 * u, -8 * u, 0.6 * u, 10 * u);
+    g.fillStyle = head;
+    g.fillRect(-1.2 * u, -8 * u, 0.6 * u, 1.4 * u);
+    // guarda
+    g.fillStyle = "#6e4d28";
+    g.fillRect(-3.4 * u, 1.6 * u, 6.8 * u, 1.6 * u);
   } else {
     // pá
     g.fillStyle = head;
@@ -261,12 +368,38 @@ function drawMaterial(g: CanvasRenderingContext2D, id: string, size: number) {
     g.translate(size / 2, size / 2);
     g.rotate(Math.PI / 4);
     g.fillStyle = "#8a6234";
-    g.fillRect(-1 * u, -6 * u, 2 * u, 12 * u);
-    g.fillStyle = "#a5794c";
-    g.fillRect(-1 * u, -6 * u, 1 * u, 12 * u);
+    g.fillRect(-0.9 * u, -6 * u, 1.8 * u, 12 * u);
     g.fillStyle = "#6e4d28";
-    g.fillRect(-2 * u, -4 * u, 1.4 * u, 1.4 * u);
-    g.fillRect(0.8 * u, 2.4 * u, 1.4 * u, 1.4 * u);
+    g.fillRect(0.3 * u, -6 * u, 0.6 * u, 12 * u);
     g.restore();
+  } else if (id === "diamante") {
+    g.fillStyle = "#4aedd9";
+    g.fillRect(4 * u, 5 * u, 8 * u, 6 * u);
+    g.fillStyle = "#a5fff2";
+    g.fillRect(5 * u, 5 * u, 3 * u, 2 * u);
+    g.fillStyle = "#2fbfae";
+    g.fillRect(4 * u, 9 * u, 8 * u, 2 * u);
+    g.fillStyle = "#4aedd9";
+    g.fillRect(6 * u, 3 * u, 4 * u, 2 * u);
+    g.fillRect(6 * u, 11 * u, 4 * u, 2 * u);
+  } else if (id === "minerio_carvao") {
+    g.fillStyle = "#3a3a3a";
+    g.fillRect(3 * u, 4 * u, 10 * u, 8 * u);
+    g.fillStyle = "#1e1e1e";
+    g.fillRect(5 * u, 6 * u, 3 * u, 3 * u);
+    g.fillRect(9 * u, 8 * u, 2 * u, 2 * u);
+    g.fillStyle = "#555";
+    g.fillRect(4 * u, 5 * u, 2 * u, 1 * u);
+  } else if (id === "minerio_ferro") {
+    g.fillStyle = "#8d8d8d";
+    g.fillRect(3 * u, 4 * u, 10 * u, 8 * u);
+    g.fillStyle = "#d8af93";
+    g.fillRect(5 * u, 6 * u, 3 * u, 3 * u);
+    g.fillRect(9 * u, 8 * u, 2 * u, 2 * u);
+    g.fillStyle = "#a8a8a8";
+    g.fillRect(4 * u, 5 * u, 2 * u, 1 * u);
+  } else {
+    g.fillStyle = "#888";
+    g.fillRect(3 * u, 3 * u, 10 * u, 10 * u);
   }
 }

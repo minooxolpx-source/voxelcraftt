@@ -21,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   qualidade: 1,
 };
 
+export type GameMode = "survival" | "creative";
+
 export interface SaveData {
   version: number;
   seed: number;
@@ -30,6 +32,9 @@ export interface SaveData {
   deltas: Record<string, [number, number][]>;
   settings: Settings;
   timeOfDay: number;
+  mode?: GameMode;
+  health?: number;
+  bedSpawn?: { x: number; y: number; z: number } | null;
 }
 
 const KEY = "voxelworld_save_v1";
