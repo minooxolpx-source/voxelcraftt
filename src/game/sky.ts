@@ -33,13 +33,14 @@ export class Sky {
     scene.fog = this.fog;
     scene.background = this.bg;
 
+    // sol e lua QUADRADOS, como no estilo voxel clássico
     this.sunMesh = new THREE.Mesh(
-      new THREE.CircleGeometry(30, 24),
+      new THREE.PlaneGeometry(52, 52),
       new THREE.MeshBasicMaterial({ color: 0xffd76a, fog: false }),
     );
     scene.add(this.sunMesh);
     this.moonMesh = new THREE.Mesh(
-      new THREE.CircleGeometry(20, 24),
+      new THREE.PlaneGeometry(36, 36),
       new THREE.MeshBasicMaterial({ color: 0xdfe8f4, fog: false }),
     );
     scene.add(this.moonMesh);

@@ -3,7 +3,7 @@
  * com durabilidade), inventário com arrastar-e-soltar, crafting 2×2 e bancada
  * 3×3, catálogo criativo, configurações, toasts e loading.
  */
-import { RECIPES, ITEMS, itemDef, matchRecipe, recipeInputs, recipeNeedsTable } from "./blocks";
+import { RECIPES, ITEMS, itemDef, matchRecipe, recipeInputs, recipeNeedsTable, recipeSize } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
 import type { Settings, GameMode, WorldMeta } from "./save";
 import type { TexturePack } from "./textures";
@@ -27,6 +27,8 @@ export interface UIHost {
   selectSlot(i: number): void;
   invChanged(): void;
   tryCraft(r: Recipe, area: "craft" | "craft3"): boolean;
+  /** craft rápido pelo clique direito num item da mochila */
+  quickCraft(itemId: string): boolean;
   creativeTake(itemId: string): void;
   worldName: string | null;
   listWorlds(): WorldMeta[];
@@ -536,12 +538,12 @@ export class UI {
     this.invScreen.style.display = "none";
     const wrap = el("div", "inv-wrap");
 
-    // crafting 2×2
+    // crafting 3×3 (quadrado)
     const craftPanel = el("div", "panel inv-panel");
-    craftPanel.innerHTML = `<h3 class="inv-title">Fabricação 2×2</h3>`;
+    craftPanel.innerHTML = `<h3 class="inv-title">Fabricação 3×3</h3>`;
     const craftRow = el("div", "craft-row");
-    const grid = el("div", "craft-grid");
-    for (let i = 0; i < 4; i++) grid.appendChild(this.makeSlot("craft", i));
+    const grid = el("div", "craft-grid craft-grid-3");
+    for (let i = 0; i < 9; i++) grid.appendChild(this.makeSlot("craft", i));
     this.resultSlot = this.makeResult("craft");
     craftRow.append(grid, this.arrowEl(), this.resultSlot);
     craftPanel.appendChild(craftRow);
@@ -555,8 +557,8 @@ export class UI {
       const inputs = Object.entries(recipeInputs(r)).map(([id, n]) => `${n}× ${itemDef(id).name}`).join(" + ");
       const iconWrap = el("span", "rec-icon");
       iconWrap.appendChild(copyIcon(this.tex.icon(r.output.id), 26));
-      const needsTable = recipeNeedsTable(r);
-      const badge = el("span", "rec-badge" + (needsTable ? " rec-badge-3" : ""), needsTable ? "3×3" : "2×2");
+      const size = recipeSize(r);
+      const badge = el("span", "rec-badge", size);
       row.append(el("span", "rec-in", inputs), iconWrap, el("span", "rec-out", `${r.output.count}× ${itemDef(r.output.id).name}`), badge);
       recList.appendChild(row);
     }
@@ -600,7 +602,7 @@ export class UI {
     this.invPanelCreative.appendChild(hb2);
 
     wrap.append(craftPanel, recPanel, this.invPanelSurvival, this.invPanelCreative);
-    const esc = el("div", "inv-esc", "E ou ESC fecha · clique pega/solta a pilha · clique direito pega metade ou solta 1 · duplo clique junta pilhas");
+    const esc = el("div", "inv-esc", "E ou ESC fecha · arraste para mover · clique direito num item crafta ele na hora (se houver materiais) · duplo clique junta pilhas");
     this.invScreen.append(wrap, esc);
     this.root.appendChild(this.invScreen);
   }
@@ -704,7 +706,7 @@ export class UI {
     }
     this.refreshResult(this.resultSlot, this.host.craftGrid, 2);
     this.refreshResult(this.resultSlot3, this.host.craftGrid3, 3);
-    this.currentRecipe = matchRecipe(this.host.craftGrid, 2);
+    this.currentRecipe = matchRecipe(this.host.craftGrid, 3);
     this.currentRecipe3 = matchRecipe(this.host.craftGrid3, 3);
   }
 
@@ -735,6 +737,14 @@ export class UI {
     if (this.held) return;
     const stack = this.getSlotStack(area, index);
     if (!stack) return;
+    // CRAFT RÁPIDO: clique direito num item da mochila → crafta na hora se der
+    if (e.button === 2 && area === "main") {
+      if (this.host.quickCraft(stack.id)) {
+        this.refreshInventory();
+        return;
+      }
+      // sem receita/materiais → comportamento padrão (pegar metade)
+    }
     if (e.button === 0) {
       this.held = { item: { ...stack }, area, index };
       this.setSlotStack(area, index, null);

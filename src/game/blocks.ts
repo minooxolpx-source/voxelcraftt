@@ -434,6 +434,12 @@ export function recipeNeedsTable(r: Recipe): boolean {
   return (b.maxX - b.minX + 1) > 2 || (b.maxY - b.minY + 1) > 2;
 }
 
+/** Dimensões do desenho da receita ("2×1", "3×3", ...). */
+export function recipeSize(r: Recipe): string {
+  const b = patternBounds(r);
+  return `${b.maxX - b.minX + 1}×${b.maxY - b.minY + 1}`;
+}
+
 /** Bounding box das células ocupadas da grade (largura = 2 ou 3). */
 export function gridBounds(grid: (ItemStack | null)[], width: number): { minX: number; minY: number; maxX: number; maxY: number } | null {
   let minX = 99, maxX = -1, minY = 99, maxY = -1;

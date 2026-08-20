@@ -5,7 +5,7 @@
  * 3×3, cama, voo criativo, mão em primeira pessoa e salvamento.
  */
 import * as THREE from "three";
-import { B, ITEMS, blockDef, breakTime, itemDef, gridBounds, patternBounds } from "./blocks";
+import { B, ITEMS, blockDef, breakTime, itemDef, gridBounds, patternBounds, RECIPES, recipeInputs } from "./blocks";
 import type { ItemStack, Recipe } from "./blocks";
 import { makeTextures } from "./textures";
 import type { TexturePack } from "./textures";
@@ -49,7 +49,7 @@ export class Game implements UIHost {
   mode: GameMode = "survival";
   settings: Settings = { ...DEFAULT_SETTINGS };
   inventory: (ItemStack | null)[] = new Array(36).fill(null);
-  craftGrid: (ItemStack | null)[] = new Array(4).fill(null);
+  craftGrid: (ItemStack | null)[] = new Array(9).fill(null); // 3×3 (quadrada)
   craftGrid3: (ItemStack | null)[] = new Array(9).fill(null);
   selectedSlot = 0;
   health = 20;
@@ -309,7 +309,7 @@ export class Game implements UIHost {
     this.mobs = new Mobs(this.scene, this.world);
     this.drops = new Drops(this.scene, this.world, this.tex);
     this.inventory = new Array(36).fill(null);
-    this.craftGrid = new Array(4).fill(null);
+    this.craftGrid = new Array(9).fill(null);
     this.craftGrid3 = new Array(9).fill(null);
     this.health = 20;
     this.bedSpawn = null;
@@ -387,7 +387,7 @@ export class Game implements UIHost {
     this.drops = new Drops(this.scene, this.world, this.tex);
     this.player = new Player();
     this.bindPlayerHooks();
-    this.craftGrid = new Array(4).fill(null);
+    this.craftGrid = new Array(9).fill(null);
     this.craftGrid3 = new Array(9).fill(null);
     this.applySave(data);
     this.started = true;
@@ -434,7 +434,7 @@ export class Game implements UIHost {
 
   tryCraft(r: Recipe, area: "craft" | "craft3"): boolean {
     const grid = area === "craft" ? this.craftGrid : this.craftGrid3;
-    const width = area === "craft" ? 2 : 3;
+    const width = 3; // as duas grades agora são 3×3
     const b = gridBounds(grid, width);
     if (!b) return false;
     const pb = patternBounds(r);
@@ -453,6 +453,34 @@ export class Game implements UIHost {
     }
     this.giveItem(r.output.id, r.output.count);
     this.audio.craft();
+    return true;
+  }
+
+  /**
+   * Craft rápido: clique direito num item do inventário → se existir receita
+   * que o produz e houver materiais na mochila, crafta na hora.
+   */
+  quickCraft(itemId: string): boolean {
+    if (this.mode === "creative") return false;
+    const recipe = RECIPES.find((r) => r.output.id === itemId);
+    if (!recipe) return false;
+    const need = recipeInputs(recipe);
+    const avail: Record<string, number> = {};
+    for (const s of this.inventory) if (s) avail[s.id] = (avail[s.id] ?? 0) + s.count;
+    for (const k of Object.keys(need)) if ((avail[k] ?? 0) < need[k]) return false;
+    // consome os materiais (varre a mochila inteira)
+    const left = { ...need };
+    for (let i = 0; i < this.inventory.length; i++) {
+      const s = this.inventory[i];
+      if (!s || !(left[s.id] > 0)) continue;
+      const take = Math.min(s.count, left[s.id]);
+      s.count -= take;
+      left[s.id] -= take;
+      if (s.count <= 0) this.inventory[i] = null;
+    }
+    this.giveItem(recipe.output.id, recipe.output.count);
+    this.audio.craft();
+    this.ui.toast(`Craftado: ${recipe.output.count}× ${itemDef(itemId).name}`);
     return true;
   }
 
@@ -520,6 +548,11 @@ export class Game implements UIHost {
   }
 
   private closeInventory(): void {
+    // devolve os itens da grade 3×3 ao inventário
+    for (let i = 0; i < 9; i++) {
+      const s = this.craftGrid[i];
+      if (s) { this.giveItem(s.id, s.count); this.craftGrid[i] = null; }
+    }
     this.state = "playing";
     this.ui.showInventory(false);
     this.requestLock(4);
