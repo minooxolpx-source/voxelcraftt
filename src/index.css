@@ -783,6 +783,44 @@ kbd {
   align-items: center;
   gap: 18px;
 }
+
+/* topo clássico: receitas | fabricação (lado a lado, como no original) */
+.inv-top {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* linha grade + seta + resultado (bancada clássica) */
+.craft-top {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 10px 6px 6px;
+}
+
+/* separador entre a grade e o inventário */
+.craft-sep {
+  border-top: 2px solid var(--line);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.05);
+  margin: 16px 0 12px;
+}
+
+/* rótulo de seção dentro do painel */
+.inv-label {
+  font-family: "Press Start 2P", monospace;
+  font-size: 10px;
+  color: var(--dim);
+  margin: 0 0 10px;
+}
+
+.bench-panel {
+  display: flex;
+  flex-direction: column;
+}
 .craft-grid {
   display: grid;
   grid-template-columns: repeat(2, 48px);

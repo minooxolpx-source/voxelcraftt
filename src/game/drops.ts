@@ -50,6 +50,7 @@ export class Drops {
       mesh = new THREE.Mesh(this.matGeo, new THREE.MeshLambertMaterial({ color: MAT_COLORS[itemId] ?? 0xcccccc }));
     }
     mesh.position.set(x + 0.5, y + 0.45, z + 0.5);
+    mesh.castShadow = true;
     const drop: Drop = {
       mesh, id: itemId, count,
       vel: new THREE.Vector3((Math.random() - 0.5) * 2.4, 2.6 + Math.random() * 1.6, (Math.random() - 0.5) * 2.4),

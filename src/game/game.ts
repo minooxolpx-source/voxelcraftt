@@ -205,6 +205,8 @@ export class Game implements UIHost {
 
   private init(): void {
     this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.canvas = this.renderer.domElement;
     this.canvas.className = "game-canvas";
@@ -337,6 +339,7 @@ export class Game implements UIHost {
       const caps = [0.85, 1.5, 2];
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, caps[s.qualidade]));
     }
+    if (this.sky) this.sky.setShadowQuality(s.qualidade);
     this.syncComposerSize();
     this.applyShaderSetting();
   }
@@ -721,30 +724,49 @@ export class Game implements UIHost {
   private onKeyDown = (e: KeyboardEvent): void => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
     this.audio.unlock();
+
+    // Controles de jogo só capturam o teclado DURANTE a partida (mouse preso).
+    // Nos menus / inventário as teclas seguem para o navegador normalmente.
+    const inGame = this.state === "playing" && this.locked;
+
+    // Bloqueia atalhos do navegador (Ctrl+W, Ctrl+F, Ctrl+S, Cmd+...) enquanto joga,
+    // para que correr (Ctrl) + andar não feche a aba nem abra busca.
+    if (inGame && (e.ctrlKey || e.metaKey)) e.preventDefault();
+
     switch (e.code) {
-      case "KeyW": this.keys.w = true; break;
-      case "KeyA": this.keys.a = true; break;
-      case "KeyS": this.keys.s = true; break;
-      case "KeyD": this.keys.d = true; break;
-      case "Space":
-        this.keys.space = true;
-        e.preventDefault();
-        if (!e.repeat && this.state === "playing" && this.mode === "creative") {
-          const now = performance.now();
-          if (now - this.lastSpaceTap < 300) this.toggleFly();
-          this.lastSpaceTap = now;
+      // ---- movimentação / ação: só dentro do jogo, sempre com preventDefault ----
+      case "KeyW": case "KeyA": case "KeyS": case "KeyD":
+      case "Space": case "ShiftLeft": case "ShiftRight":
+      case "ControlLeft": case "ControlRight":
+        if (inGame) {
+          e.preventDefault(); // impede scroll da página e atalhos Ctrl+tecla
+          switch (e.code) {
+            case "KeyW": this.keys.w = true; break;
+            case "KeyA": this.keys.a = true; break;
+            case "KeyS": this.keys.s = true; break;
+            case "KeyD": this.keys.d = true; break;
+            case "Space": this.keys.space = true; break;
+            case "ShiftLeft": case "ShiftRight": this.keys.shift = true; break;
+            case "ControlLeft": case "ControlRight": this.keys.ctrl = true; break;
+          }
+          if (e.code === "Space" && !e.repeat && this.mode === "creative") {
+            const now = performance.now();
+            if (now - this.lastSpaceTap < 300) this.toggleFly();
+            this.lastSpaceTap = now;
+          }
         }
         break;
-      case "ShiftLeft": case "ShiftRight": this.keys.shift = true; break;
-      case "ControlLeft": case "ControlRight": this.keys.ctrl = true; e.preventDefault(); break;
+
       case "KeyF":
-        if (this.state === "playing") this.toggleFly();
+        if (inGame) { e.preventDefault(); this.toggleFly(); }
         break;
+
       case "KeyE":
-        if (this.state === "playing") this.openInventory();
-        else if (this.state === "inventory") this.closeInventory();
-        else if (this.state === "crafting") this.closeWorkbench();
+        if (this.state === "playing" && this.locked) { e.preventDefault(); this.openInventory(); }
+        else if (this.state === "inventory") { e.preventDefault(); this.closeInventory(); }
+        else if (this.state === "crafting") { e.preventDefault(); this.closeWorkbench(); }
         break;
+
       case "Escape":
         if (this.state === "inventory") { e.preventDefault(); this.closeInventory(); }
         else if (this.state === "crafting") { e.preventDefault(); this.closeWorkbench(); }
@@ -755,10 +777,11 @@ export class Game implements UIHost {
           this.ui.showPause(true);
         }
         break;
+
       default: {
-        if (e.code.startsWith("Digit") && this.state === "playing") {
+        if (e.code.startsWith("Digit") && inGame) {
           const n = parseInt(e.code.slice(5), 10);
-          if (n >= 1 && n <= 9) this.selectSlot(n - 1);
+          if (n >= 1 && n <= 9) { e.preventDefault(); this.selectSlot(n - 1); }
         }
       }
     }
@@ -837,6 +860,7 @@ export class Game implements UIHost {
     if (this.state === "playing") {
       this.state = "paused";
       this.mouseL = false; this.mouseR = false;
+      this.clearKeys();
       this.ui.setMineProgress(0);
       this.ui.showPause(true);
     }
