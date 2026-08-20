@@ -328,84 +328,131 @@ export function breakTime(blockId: number, tool: ToolDef | undefined): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Receitas (shapeless — a posição não importa, só os itens e quantidades) */
+/* Receitas SHAPEADAS (estilo Minecraft): a posição dos itens importa.  */
+/* O padrão é comparado com a "bounding box" dos itens na grade, então  */
+/* ele pode ficar em qualquer canto da grade — como no original.        */
 /* ------------------------------------------------------------------ */
 
 export interface Recipe {
-  inputs: Record<string, number>;
+  /** linhas do padrão; " " = vazio, letras = itens via `keys` */
+  pattern: string[];
+  keys: Record<string, string>;
   output: ItemStack;
-  /** exige bancada 3×3? */
-  table?: boolean;
 }
 
+const R = (pattern: string[], keys: Record<string, string>, id: string, count: number): Recipe =>
+  ({ pattern, keys, output: { id, count } });
+
+const M = "minerio_ferro", S = "graveto", P = "paralele", D = "diamante", TB = "tabuas", O = "ouro";
+
 export const RECIPES: Recipe[] = [
-  // --- grade 2×2 (inventário) ---
-  { inputs: { tronco: 1 }, output: { id: "tabuas", count: 4 } },
-  { inputs: { tabuas: 2 }, output: { id: "graveto", count: 4 } },
-  { inputs: { tabuas: 4 }, output: { id: "bancada", count: 1 } },
-  { inputs: { graveto: 1, tabuas: 1 }, output: { id: "pa_madeira", count: 1 } },
-  { inputs: { graveto: 1, tabuas: 2 }, output: { id: "espada_madeira", count: 1 } },
-  { inputs: { graveto: 2, tabuas: 2 }, output: { id: "machado_madeira", count: 1 } },
-  { inputs: { graveto: 2, tabuas: 3 }, output: { id: "picareta_madeira", count: 1 } },
-  { inputs: { areia: 4 }, output: { id: "arenito", count: 1 } },
-  { inputs: { pedra: 4 }, output: { id: "pedra_polida", count: 4 } },
-  { inputs: { paralele: 4 }, output: { id: "tijolos", count: 4 } },
-  // --- bancada 3×3 ---
-  { inputs: { graveto: 1, paralele: 1 }, output: { id: "pa_pedra", count: 1 }, table: true },
-  { inputs: { graveto: 1, paralele: 2 }, output: { id: "espada_pedra", count: 1 }, table: true },
-  { inputs: { graveto: 2, paralele: 2 }, output: { id: "machado_pedra", count: 1 }, table: true },
-  { inputs: { graveto: 2, paralele: 3 }, output: { id: "picareta_pedra", count: 1 }, table: true },
-  { inputs: { graveto: 1, minerio_ferro: 1 }, output: { id: "pa_ferro", count: 1 }, table: true },
-  { inputs: { graveto: 1, minerio_ferro: 2 }, output: { id: "espada_ferro", count: 1 }, table: true },
-  { inputs: { graveto: 2, minerio_ferro: 2 }, output: { id: "machado_ferro", count: 1 }, table: true },
-  { inputs: { graveto: 2, minerio_ferro: 3 }, output: { id: "picareta_ferro", count: 1 }, table: true },
-  { inputs: { graveto: 1, diamante: 1 }, output: { id: "pa_diamante", count: 1 }, table: true },
-  { inputs: { graveto: 1, diamante: 2 }, output: { id: "espada_diamante", count: 1 }, table: true },
-  { inputs: { graveto: 2, diamante: 2 }, output: { id: "machado_diamante", count: 1 }, table: true },
-  { inputs: { graveto: 2, diamante: 3 }, output: { id: "picareta_diamante", count: 1 }, table: true },
-  { inputs: { la: 3, tabuas: 3 }, output: { id: "cama", count: 1 }, table: true },
-  { inputs: { minerio_ferro: 3 }, output: { id: "balde", count: 1 }, table: true },
-  { inputs: { tabuas: 4, minerio_ferro: 2 }, output: { id: "escudo", count: 1 }, table: true },
-  // armaduras de ferro
-  { inputs: { minerio_ferro: 5 }, output: { id: "capacete_ferro", count: 1 }, table: true },
-  { inputs: { minerio_ferro: 8 }, output: { id: "peitoral_ferro", count: 1 }, table: true },
-  { inputs: { minerio_ferro: 7 }, output: { id: "calca_ferro", count: 1 }, table: true },
-  { inputs: { minerio_ferro: 4 }, output: { id: "botas_ferro", count: 1 }, table: true },
-  // armaduras de diamante
-  { inputs: { diamante: 5 }, output: { id: "capacete_diamante", count: 1 }, table: true },
-  { inputs: { diamante: 8 }, output: { id: "peitoral_diamante", count: 1 }, table: true },
-  { inputs: { diamante: 7 }, output: { id: "calca_diamante", count: 1 }, table: true },
-  { inputs: { diamante: 4 }, output: { id: "botas_diamante", count: 1 }, table: true },
-  // decorativos avançados
-  { inputs: { areia: 4, minerio_carvao: 1 }, output: { id: "vidro", count: 4 }, table: true },
-  { inputs: { tabuas: 6 }, output: { id: "prateleira", count: 1 }, table: true },
-  { inputs: { tabuas: 8 }, output: { id: "bau", count: 1 }, table: true },
-  { inputs: { minerio_ferro: 9 }, output: { id: "bloco_ferro", count: 1 }, table: true },
-  { inputs: { ouro: 9 }, output: { id: "bloco_ouro", count: 1 }, table: true },
-  { inputs: { diamante: 9 }, output: { id: "bloco_diamante", count: 1 }, table: true },
-  { inputs: { minerio_carvao: 4, graveto: 1 }, output: { id: "luminaria", count: 4 }, table: true },
-  { inputs: { terra: 4 }, output: { id: "terracota", count: 4 }, table: true },
-  { inputs: { areia: 4, paralele: 1 }, output: { id: "concreto", count: 4 }, table: true },
-  { inputs: { la: 1, terra: 1 }, output: { id: "la_vermelha", count: 1 } },
+  // --- básicos (cabem na grade 2×2 do inventário) ---
+  R(["L"], { L: "tronco" }, "tabuas", 4),
+  R(["T", "T"], { T: TB }, "graveto", 4),
+  R(["TT", "TT"], { T: TB }, "bancada", 1),
+  R(["AA", "AA"], { A: "areia" }, "arenito", 1),
+  R(["AA", "AA"], { A: "areia_vermelha" }, "concreto", 4),
+  R(["PP", "PP"], { P: "pedra" }, "pedra_polida", 4),
+  R(["PP", "PP"], { P }, "tijolos", 4),
+  R(["TT", "TT", "TT"], { T: TB }, "prateleira", 1),
+  R(["T T", "TTT", "TTT"], { T: TB }, "bau", 1),
+  // --- ferramentas de madeira (bancada) ---
+  R(["TTT", " S ", " S "], { T: TB, S }, "picareta_madeira", 1),
+  R([" T ", " S ", " S "], { T: TB, S }, "pa_madeira", 1),
+  R(["TT", "TS", " S"], { T: TB, S }, "machado_madeira", 1),
+  R(["T", "T", "S"], { T: TB, S }, "espada_madeira", 1),
+  // --- pedra ---
+  R(["PPP", " S ", " S "], { P, S }, "picareta_pedra", 1),
+  R([" P ", " S ", " S "], { P, S }, "pa_pedra", 1),
+  R(["PP", "PS", " S"], { P, S }, "machado_pedra", 1),
+  R(["P", "P", "S"], { P, S }, "espada_pedra", 1),
+  // --- ferro ---
+  R(["MMM", " S ", " S "], { M, S }, "picareta_ferro", 1),
+  R([" M ", " S ", " S "], { M, S }, "pa_ferro", 1),
+  R(["MM", "MS", " S"], { M, S }, "machado_ferro", 1),
+  R(["M", "M", "S"], { M, S }, "espada_ferro", 1),
+  // --- diamante ---
+  R(["DDD", " S ", " S "], { D, S }, "picareta_diamante", 1),
+  R([" D ", " S ", " S "], { D, S }, "pa_diamante", 1),
+  R(["DD", "DS", " S"], { D, S }, "machado_diamante", 1),
+  R(["D", "D", "S"], { D, S }, "espada_diamante", 1),
+  // --- utilitários ---
+  R(["LLL", "TTT"], { L: "la", T: TB }, "cama", 1),
+  R(["M M", " M "], { M }, "balde", 1),
+  R(["TMT", "TTT", " T "], { T: TB, M }, "escudo", 1),
+  R(["C", "C"], { C: "minerio_carvao" }, "luminaria", 4),
+  // --- armaduras de ferro (desenho clássico do original) ---
+  R(["MMM", "M M"], { M }, "capacete_ferro", 1),
+  R(["M M", "MMM", "MMM"], { M }, "peitoral_ferro", 1),
+  R(["MMM", "M M", "M M"], { M }, "calca_ferro", 1),
+  R(["M M", "M M"], { M }, "botas_ferro", 1),
+  // --- armaduras de diamante ---
+  R(["DDD", "D D"], { D }, "capacete_diamante", 1),
+  R(["D D", "DDD", "DDD"], { D }, "peitoral_diamante", 1),
+  R(["DDD", "D D", "D D"], { D }, "calca_diamante", 1),
+  R(["D D", "D D"], { D }, "botas_diamante", 1),
+  // --- blocos de armazenamento ---
+  R(["MMM", "MMM", "MMM"], { M }, "bloco_ferro", 1),
+  R(["OOO", "OOO", "OOO"], { O }, "bloco_ouro", 1),
+  R(["DDD", "DDD", "DDD"], { D }, "bloco_diamante", 1),
+  R(["F"], { F: "bloco_ferro" }, "minerio_ferro", 9),
+  R(["G"], { G: "bloco_ouro" }, "ouro", 9),
+  R(["E"], { E: "bloco_diamante" }, "diamante", 9),
+  // --- vidro (losango de areia + carvão no centro) ---
+  R([" A ", "ACA", " A "], { A: "areia", C: "minerio_carvao" }, "vidro", 4),
 ];
 
+/** Bounding box das células ocupadas da grade (largura = 2 ou 3). */
+export function gridBounds(grid: (ItemStack | null)[], width: number): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  let minX = 99, maxX = -1, minY = 99, maxY = -1;
+  const h = grid.length / width;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < width; x++)
+      if (grid[y * width + x]) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+  if (maxX < 0) return null;
+  return { minX, minY, maxX, maxY };
+}
+
 /**
- * Verifica a grade contra as receitas. Aceita quantidades MAIORES que o
- * necessário (o excedente fica na grade) — sem itens extras de outro tipo.
+ * Compara a grade com todas as receitas SHAPEADAS. O padrão pode estar em
+ * qualquer posição da grade (a bounding box dos itens precisa coincidir com
+ * a bounding box do padrão). Receitas de 3 de largura/altura só casam na
+ * bancada 3×3 — exatamente como no Minecraft.
  */
-export function matchRecipe(grid: (ItemStack | null)[], allowTable: boolean): Recipe | null {
-  const counts: Record<string, number> = {};
-  for (const s of grid) {
-    if (!s) continue;
-    counts[s.id] = (counts[s.id] ?? 0) + s.count;
-  }
+export function matchRecipe(grid: (ItemStack | null)[], width: number): Recipe | null {
+  const b = gridBounds(grid, width);
+  if (!b) return null;
+  const gw = b.maxX - b.minX + 1, gh = b.maxY - b.minY + 1;
+
   for (const r of RECIPES) {
-    if (r.table && !allowTable) continue;
-    const keys = Object.keys(r.inputs);
-    if (keys.length !== Object.keys(counts).length) continue;
+    // bounding box do padrão (ignora linhas/colunas de espaço no contorno)
+    let pMinX = 99, pMaxX = -1, pMinY = 99, pMaxY = -1;
+    for (let y = 0; y < r.pattern.length; y++)
+      for (let x = 0; x < r.pattern[y].length; x++)
+        if (r.pattern[y][x] !== " ") {
+          if (x < pMinX) pMinX = x;
+          if (x > pMaxX) pMaxX = x;
+          if (y < pMinY) pMinY = y;
+          if (y > pMaxY) pMaxY = y;
+        }
+    const pw = pMaxX - pMinX + 1, ph = pMaxY - pMinY + 1;
+    if (pw !== gw || ph !== gh) continue;
+
     let ok = true;
-    for (const k of keys) {
-      if ((counts[k] ?? 0) < r.inputs[k]) { ok = false; break; }
+    for (let y = 0; y < gh && ok; y++) {
+      for (let x = 0; x < gw; x++) {
+        const ch = r.pattern[pMinY + y][pMinX + x];
+        const need = ch === " " ? null : r.keys[ch];
+        const have = grid[(b.minY + y) * width + (b.minX + x)];
+        if (need === null) {
+          if (have && have.count > 0) { ok = false; break; }
+        } else if (!have || have.id !== need) { ok = false; break; }
+      }
     }
     if (ok) return r;
   }
